@@ -1,231 +1,299 @@
-# Tutorial: Adding Game Features (Like Woodcutting)
+# Tutorial: Adding Game Features (Complete Idiot-Proof Guide)
 
-This tutorial explains the architecture and step-by-step process for adding new interactive features to Sacred Heart, using the Woodcutting system as a reference example.
+This tutorial will walk you through adding new features to Sacred Heart step-by-step. We'll use Mining as our example, and explain **everything** like you've never coded before.
 
-## Table of Contents
-1. [Architecture Overview](#architecture-overview)
-2. [Project Structure](#project-structure)
-3. [Step-by-Step: Adding a New Feature](#step-by-step-adding-a-new-feature)
-4. [Example: Woodcutting Implementation](#example-woodcutting-implementation)
-5. [Testing Your Feature](#testing-your-feature)
-6. [Best Practices](#best-practices)
+## What You'll Learn
+- How the game works (client + server)
+- Where every file lives
+- How to add a new feature from scratch
+- Copy-paste examples that actually work
 
 ---
 
-## Architecture Overview
+## Part 1: Understanding the Game Structure
 
-Sacred Heart uses a **client-server architecture** with real-time communication:
+### Think of it Like a Restaurant
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         CLIENT                              │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐ │
-│  │   Game.tsx   │───▶│  Tree.ts     │    │  Player.ts   │ │
-│  │ (Coordinator)│    │ (Entity)     │    │  (Entity)    │ │
-│  └──────┬───────┘    └──────────────┘    └──────────────┘ │
-│         │                                                   │
-│         ▼                                                   │
-│  ┌──────────────────────────────────────┐                 │
-│  │  network/Woodcutting.ts              │                 │
-│  │  (Network Events Handler)            │                 │
-│  └──────────────┬───────────────────────┘                 │
-└─────────────────┼───────────────────────────────────────────┘
-                  │ Socket.IO
-                  │ (WebSocket)
-┌─────────────────▼───────────────────────────────────────────┐
-│                         SERVER                              │
-│  ┌──────────────────────────────────────┐                  │
-│  │  game/GameServer.ts                  │                  │
-│  │  (Connection & Event Router)         │                  │
-│  └──────────────┬───────────────────────┘                  │
-│                 │                                           │
-│                 ▼                                           │
-│  ┌──────────────────────────────────────┐                  │
-│  │  game/handlers/TreeHandler.ts        │                  │
-│  │  (Business Logic & State Management) │                  │
-│  └──────────────────────────────────────┘                  │
-└─────────────────────────────────────────────────────────────┘
-```
+**SERVER** = The Kitchen
+- Keeps track of everything (who's where, what's happening)
+- Makes sure nobody cheats
+- Tells everyone what's happening
 
-### Key Concepts
+**CLIENT** = The Customer's Table
+- Shows you pretty pictures (trees, players, etc.)
+- Listens for your clicks and keyboard
+- Asks the server "Can I do this?"
+- Displays what the server says happened
 
-- **Client**: Handles rendering, user input, and visual feedback
-- **Server**: Manages authoritative game state, validates actions, broadcasts updates
-- **Network Layer**: Socket.IO events for real-time bidirectional communication
-- **Handlers**: Server-side classes that encapsulate feature logic
+**NETWORK** = The Waiter
+- Takes your order to the kitchen (client → server)
+- Brings food back (server → client)
 
----
-
-## Project Structure
+### The File Structure (Where Everything Lives)
 
 ```
 Sacred-Heart/
-├── client/
-│   └── src/
-│       └── game/
-│           ├── Game.tsx              # Main game coordinator
-│           ├── Tree.ts               # Tree entity class
-│           ├── Player.ts             # Player entity class
-│           └── network/
-│               ├── Network.ts        # Main network class
-│               └── Woodcutting.ts    # Feature-specific network events
 │
-└── server/
-    ├── server.ts                     # Entry point
+├── client/                          ← Everything the player SEES
+│   └── src/
+│       ├── pages/
+│       │   └── Game.tsx            ← React page (UI like chat, logout button)
+│       │
+│       └── game/
+│           ├── Game.tsx            ← Main game coordinator (THE BOSS)
+│           │
+│           ├── handlers/           ← Feature managers (each feature has one)
+│           │   ├── WoodcuttingHandler.ts   ← Manages trees + woodcutting
+│           │   ├── ChatHandler.ts          ← Manages chat messages
+│           │   ├── MovementHandler.ts      ← Manages player movement
+│           │   ├── PlayerHandler.ts        ← Manages other players
+│           │   └── InteractionHandler.ts   ← Manages clicking things
+│           │
+│           ├── Tree.ts             ← What a tree IS (the class)
+│           ├── Player.ts           ← What a player IS (the class)
+│           │
+│           └── network/            ← Talks to server
+│               ├── Network.ts      ← Main network coordinator
+│               └── Woodcutting.ts  ← Woodcutting-specific network events
+│
+└── server/                          ← The "brain" that controls everything
+    ├── server.ts                   ← Starting point (boots everything up)
+    │
     └── src/
         ├── game/
-        │   ├── GameServer.ts         # Socket.IO game server
-        │   └── handlers/
-        │       └── TreeHandler.ts    # Woodcutting logic
+        │   ├── GameServer.ts       ← Handles all game connections
+        │   │
+        │   └── handlers/           ← Feature logic (server side)
+        │       └── TreeHandler.ts  ← Controls all trees + woodcutting
+        │
         ├── http/
-        │   └── app.ts                # Express REST API
-        ├── models/
-        │   └── Player.ts             # MongoDB player model
-        └── routes/
-            ├── auth.ts
-            └── verify.ts
+        │   └── app.ts              ← Handles login/logout (not game stuff)
+        │
+        └── models/
+            └── Player.ts           ← Database schema (saves player data)
 ```
 
 ---
 
-## Step-by-Step: Adding a New Feature
+## Part 2: How a Feature Works (Step-by-Step Flow)
 
-Let's walk through adding a new feature like "Mining Rocks" using the same pattern as Woodcutting.
+Let's trace what happens when you click a tree:
 
-### Step 1: Define Your Feature Requirements
+### 1. **You Click a Tree** (CLIENT - InteractionHandler.ts)
+```typescript
+// InteractionHandler detects your click using raycasting
+// It checks: "Did you click a tree or a player?"
+// If tree → calls WoodcuttingHandler
+```
 
-**Example: Mining System**
-- Rocks spawn at fixed locations
-- Players click rocks to mine them
-- Each hit deals damage (e.g., 15 damage)
+### 2. **Client Asks Permission** (CLIENT - WoodcuttingHandler.ts)
+```typescript
+public handleTreeChop(treeId: string): void {
+    // Send request to server: "Hey, I want to chop tree-1"
+    this.network.sendTreeChop(treeId);
+}
+```
+
+### 3. **Network Sends Message** (CLIENT - network/Woodcutting.ts)
+```typescript
+public sendTreeChop(treeId: string): void {
+    // Socket.IO sends message over the internet
+    this.socket.emit('treeChop', { treeId });
+}
+```
+
+### 4. **Server Receives Request** (SERVER - GameServer.ts)
+```typescript
+socket.on('treeChop', (data) => {
+    // Route to TreeHandler
+    treeHandler.handleTreeChop(socket, data.treeId);
+});
+```
+
+### 5. **Server Processes Action** (SERVER - handlers/TreeHandler.ts)
+```typescript
+public handleTreeChop(socket: Socket, treeId: string): void {
+    // Check if tree exists and is alive
+    // Damage the tree (-20 health)
+    // Give player rewards (25 XP, 1 log)
+    // Tell EVERYONE the tree's new health
+    this.io.emit('treeUpdate', treeData);
+    // Tell the chopper their reward
+    socket.emit('woodcuttingReward', { logs: 1, xp: 25 });
+}
+```
+
+### 6. **All Clients Get Update** (CLIENT - WoodcuttingHandler.ts)
+```typescript
+public handleTreeUpdate(treeData: TreeData): void {
+    // Update the tree's visual health bar
+    const tree = this.trees.get(treeData.id);
+    tree.update(treeData);
+}
+```
+
+**That's it!** Every feature follows this pattern:
+```
+Click → Handler → Network → Server → Handler → Network → All Clients Update
+```
+
+---
+
+## Part 3: Adding a New Feature (Mining Rocks)
+
+We're going to add a Mining feature where players can click rocks to mine them.
+
+### What We're Building:
+- 10 rocks around the map
+- Click a rock to mine it
+- Each hit = 15 damage
 - Rocks have 120 health
-- When depleted, rocks respawn after 45 seconds
-- Players get ore and mining XP
+- Dead rocks respawn after 45 seconds
+- You get ore + XP for mining
 
-### Step 2: Create the Client-Side Entity Class
+---
 
-Create `client/src/game/Rock.ts`:
+### STEP 1: Create the Rock Class (CLIENT)
+
+**Location:** `client/src/game/Rock.ts`
+
+**What this file does:** Defines what a rock IS (its health, position, appearance)
+
+**Create this new file:**
 
 ```typescript
 import * as BABYLON from '@babylonjs/core';
 
+// This interface defines the data structure for a rock
 export interface RockData {
-    id: string;
-    position: { x: number; z: number };
-    health: number;
-    maxHealth: number;
-    isAlive: boolean;
+    id: string;                           // Unique ID like "rock-1"
+    position: { x: number; z: number };   // Where it sits on the map
+    health: number;                        // Current health (0-120)
+    maxHealth: number;                     // Max health (120)
+    isAlive: boolean;                      // true = visible, false = respawning
 }
 
+/**
+ * Rock Class - Represents a mineable rock in the 3D world
+ * 
+ * This class:
+ * - Creates the 3D mesh (sphere)
+ * - Shows a health bar above it
+ * - Updates when damaged
+ * - Hides when depleted
+ */
 export class Rock {
     private scene: BABYLON.Scene;
     private id: string;
     private position: { x: number; z: number };
     
-    // Visual meshes
-    private mesh?: BABYLON.Mesh;
+    // Visual elements
+    private mesh?: BABYLON.Mesh;                   // The rock sphere
+    private healthBarBackground?: BABYLON.Mesh;    // Red bar (background)
+    private healthBarForeground?: BABYLON.Mesh;    // Green bar (foreground)
     
-    // Health system
+    // State
     private health: number;
     private maxHealth: number;
     private isAlive: boolean;
-    
-    // Health bar
-    private healthBarBackground?: BABYLON.Mesh;
-    private healthBarForeground?: BABYLON.Mesh;
-    
-    // Interaction callback
-    private onMineCallback?: (rockId: string) => void;
 
-    constructor(scene: BABYLON.Scene, rockData: RockData, onMine?: (rockId: string) => void) {
+    constructor(scene: BABYLON.Scene, rockData: RockData) {
         this.scene = scene;
         this.id = rockData.id;
         this.position = rockData.position;
         this.health = rockData.health;
         this.maxHealth = rockData.maxHealth;
         this.isAlive = rockData.isAlive;
-        this.onMineCallback = onMine;
         
+        // Create the visual elements
         this.createRockMesh();
         this.createHealthBar();
     }
 
+    /**
+     * Create the 3D rock mesh (a gray sphere)
+     */
     private createRockMesh(): void {
-        // Create a gray sphere for the rock
+        // Create a sphere to represent the rock
         this.mesh = BABYLON.MeshBuilder.CreateSphere(`rock-${this.id}`, {
-            diameter: 2
+            diameter: 2  // 2 units wide
         }, this.scene);
         
+        // Position it on the map
         this.mesh.position = new BABYLON.Vector3(
             this.position.x,
-            1, // Height
+            1,  // 1 unit above ground
             this.position.z
         );
         
+        // Make it gray
         const material = new BABYLON.StandardMaterial(`rock-mat-${this.id}`, this.scene);
-        material.diffuseColor = new BABYLON.Color3(0.5, 0.5, 0.5); // Gray
+        material.diffuseColor = new BABYLON.Color3(0.5, 0.5, 0.5);
         this.mesh.material = material;
         
-        // Make clickable
+        // Make it clickable
         this.mesh.isPickable = true;
-        this.mesh.metadata = { type: 'rock', id: this.id };
+        
+        // Add metadata so InteractionHandler knows this is a rock
+        this.mesh.metadata = { type: 'rock', rockId: this.id };
     }
 
+    /**
+     * Create health bar above the rock
+     */
     private createHealthBar(): void {
-        // Background (red)
+        // Background bar (red)
         this.healthBarBackground = BABYLON.MeshBuilder.CreatePlane(`rock-hpbg-${this.id}`, {
             width: 1,
             height: 0.1
         }, this.scene);
         
         const bgMaterial = new BABYLON.StandardMaterial(`rock-hpbg-mat-${this.id}`, this.scene);
-        bgMaterial.diffuseColor = new BABYLON.Color3(1, 0, 0);
+        bgMaterial.diffuseColor = new BABYLON.Color3(1, 0, 0);  // Red
         bgMaterial.emissiveColor = new BABYLON.Color3(0.5, 0, 0);
         this.healthBarBackground.material = bgMaterial;
-        this.healthBarBackground.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+        this.healthBarBackground.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;  // Always face camera
         this.healthBarBackground.position = new BABYLON.Vector3(
             this.position.x,
-            2.5,
+            2.5,  // Above the rock
             this.position.z
         );
         
-        // Foreground (green)
+        // Foreground bar (green)
         this.healthBarForeground = BABYLON.MeshBuilder.CreatePlane(`rock-hpfg-${this.id}`, {
             width: 1,
             height: 0.1
         }, this.scene);
         
         const fgMaterial = new BABYLON.StandardMaterial(`rock-hpfg-mat-${this.id}`, this.scene);
-        fgMaterial.diffuseColor = new BABYLON.Color3(0, 1, 0);
+        fgMaterial.diffuseColor = new BABYLON.Color3(0, 1, 0);  // Green
         fgMaterial.emissiveColor = new BABYLON.Color3(0, 0.5, 0);
         this.healthBarForeground.material = fgMaterial;
         this.healthBarForeground.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
         this.healthBarForeground.position = new BABYLON.Vector3(
             this.position.x,
-            2.51,
+            2.51,  // Slightly in front of red bar
             this.position.z
         );
     }
 
-    public mine(): void {
-        if (this.isAlive && this.onMineCallback) {
-            this.onMineCallback(this.id);
-        }
-    }
-
+    /**
+     * Update the rock's state (called when server sends update)
+     */
     public update(rockData: RockData): void {
         this.health = rockData.health;
         this.isAlive = rockData.isAlive;
         
-        // Update health bar
+        // Update health bar width based on health percentage
         if (this.healthBarForeground) {
-            const healthPercent = this.health / this.maxHealth;
+            const healthPercent = this.health / this.maxHealth;  // 0.0 to 1.0
             this.healthBarForeground.scaling.x = healthPercent;
+            // Shift left as health decreases (so it shrinks from right side)
             this.healthBarForeground.position.x = 
                 this.position.x - (1 - healthPercent) / 2;
         }
         
-        // Hide rock if depleted
+        // Hide rock and health bars when dead (respawning)
         if (this.mesh) {
             this.mesh.setEnabled(this.isAlive);
         }
@@ -237,6 +305,23 @@ export class Rock {
         }
     }
 
+    /**
+     * Get the rock's mesh (for raycasting/clicking)
+     */
+    public getMesh(): BABYLON.Mesh | undefined {
+        return this.mesh;
+    }
+
+    /**
+     * Get the rock's ID
+     */
+    public getId(): string {
+        return this.id;
+    }
+
+    /**
+     * Clean up when removing rock
+     */
     public dispose(): void {
         this.mesh?.dispose();
         this.healthBarBackground?.dispose();
@@ -245,14 +330,28 @@ export class Rock {
 }
 ```
 
-### Step 3: Create Network Event Handler
+---
 
-Create `client/src/game/network/Mining.ts`:
+### STEP 2: Create Mining Network Module (CLIENT)
+
+**Location:** `client/src/game/network/Mining.ts`
+
+**What this file does:** Sends mining actions to server and receives updates
+
+**Create this new file:**
 
 ```typescript
 import type { Socket } from 'socket.io-client';
 import type { RockData } from '../Rock';
 
+/**
+ * MiningNetwork - Handles all mining-related network events
+ * 
+ * This module:
+ * - Sends mining actions to server
+ * - Listens for rock updates from server
+ * - Listens for mining rewards
+ */
 export class MiningNetwork {
     private socket: Socket;
 
@@ -260,26 +359,38 @@ export class MiningNetwork {
         this.socket = socket;
     }
 
-    // Send mining action to server
+    /**
+     * Tell server we want to mine a rock
+     */
     public sendRockMine(rockId: string): void {
+        console.log(`[MiningNetwork] Sending mine request for ${rockId}`);
         this.socket.emit('rockMine', { rockId });
     }
 
-    // Listen for rock state updates
+    /**
+     * Listen for single rock updates (when someone mines)
+     */
     public onRockUpdate(callback: (rockData: RockData) => void): void {
         this.socket.on('rockUpdate', callback);
     }
 
-    // Listen for bulk rock updates (initial sync)
+    /**
+     * Listen for bulk rock updates (when first connecting)
+     */
     public onRocksUpdate(callback: (rocks: RockData[]) => void): void {
         this.socket.on('rocksUpdate', callback);
     }
 
-    // Listen for mining rewards
+    /**
+     * Listen for mining rewards (ore + XP)
+     */
     public onMiningReward(callback: (data: { ore: number; xp: number; rockId: string }) => void): void {
         this.socket.on('miningReward', callback);
     }
 
+    /**
+     * Clean up listeners when game closes
+     */
     public cleanup(): void {
         this.socket.off('rockUpdate');
         this.socket.off('rocksUpdate');
@@ -288,216 +399,719 @@ export class MiningNetwork {
 }
 ```
 
-### Step 4: Integrate Into Game Coordinator
+---
 
-Update `client/src/game/Game.tsx`:
+### STEP 3: Create Mining Handler (CLIENT)
+
+**Location:** `client/src/game/handlers/MiningHandler.ts`
+
+**What this file does:** Manages all rocks on the client, handles mining logic
+
+**Create this new file:**
 
 ```typescript
-import { MiningNetwork } from './network/Mining';
-import { Rock, RockData } from './Rock';
+import * as BABYLON from '@babylonjs/core';
+import { Rock, type RockData } from '../Rock';
+import type { Network } from '../network/Network';
 
-export class Game {
-    // Add to class properties
-    private miningNetwork: MiningNetwork;
+/**
+ * MiningHandler - Client-side mining system manager
+ * 
+ * Responsibilities:
+ * - Create all rocks in the scene
+ * - Handle rock mining (send to server)
+ * - Update rocks when server broadcasts changes
+ * - Track mining stats (level, XP, ore collected)
+ * - Clean up rocks on dispose
+ */
+export class MiningHandler {
+    private scene: BABYLON.Scene;
+    private network: Network;
     private rocks: Map<string, Rock> = new Map();
+    
+    // Mining stats
     private miningLevel: number = 1;
     private miningXP: number = 0;
     private oreCollected: number = 0;
 
-    constructor(canvas: HTMLCanvasElement, token: string) {
-        // ... existing setup ...
+    constructor(scene: BABYLON.Scene, network: Network) {
+        this.scene = scene;
+        this.network = network;
         
-        // Initialize mining network
-        this.miningNetwork = new MiningNetwork(this.network.socket);
+        // Create rocks when handler is initialized
+        this.createRocks();
         
-        // ... rest of constructor ...
+        console.log(`[MiningHandler] Initialized with ${this.rocks.size} rocks`);
     }
 
-    private setupNetworkListeners(): void {
-        // ... existing listeners ...
-        
-        // Mining listeners
-        this.miningNetwork.onRocksUpdate(this.handleRocksUpdate.bind(this));
-        this.miningNetwork.onRockUpdate(this.handleRockUpdate.bind(this));
-        this.miningNetwork.onMiningReward(this.handleMiningReward.bind(this));
-    }
-
+    /**
+     * Create all rocks in the scene at fixed positions
+     */
     private createRocks(): void {
+        // Define 10 rock positions around the map
         const rockPositions = [
-            { x: 15, z: 15 },
-            { x: -15, z: 15 },
-            { x: 15, z: -15 },
-            // ... more positions
+            { x: 8, z: 8 },     // Northeast
+            { x: -8, z: 8 },    // Northwest
+            { x: 8, z: -8 },    // Southeast
+            { x: -8, z: -8 },   // Southwest
+            { x: 12, z: 0 },    // East
+            { x: -12, z: 0 },   // West
+            { x: 0, z: 12 },    // North
+            { x: 0, z: -12 },   // South
+            { x: 5, z: 5 },     // Near center 1
+            { x: -5, z: -5 },   // Near center 2
         ];
 
+        // Create a Rock instance for each position
         rockPositions.forEach((pos, index) => {
+            const rockId = `rock-${index + 1}`;
             const rockData: RockData = {
-                id: `rock-${index}`,
+                id: rockId,
                 position: pos,
-                health: 120,
+                health: 120,      // Full health
                 maxHealth: 120,
-                isAlive: true
+                isAlive: true     // Visible
             };
-
-            const rock = new Rock(
-                this.scene,
-                rockData,
-                this.handleRockMine.bind(this)
-            );
-            this.rocks.set(rockData.id, rock);
+            
+            const rock = new Rock(this.scene, rockData);
+            this.rocks.set(rockId, rock);
         });
+
+        console.log(`[MiningHandler] Created ${this.rocks.size} rocks`);
     }
 
-    private setupRockInteraction(): void {
-        this.scene.onPointerDown = (evt, pickResult) => {
-            if (pickResult.hit && pickResult.pickedMesh) {
-                const metadata = pickResult.pickedMesh.metadata;
-                
-                if (metadata && metadata.type === 'rock') {
-                    const rock = this.rocks.get(metadata.id);
-                    if (rock) {
-                        rock.mine();
-                    }
-                }
-            }
-        };
+    /**
+     * Handle rock mine (when player clicks a rock)
+     * Sends request to server
+     */
+    public handleRockMine(rockId: string): void {
+        const rock = this.rocks.get(rockId);
+        if (!rock) {
+            console.error(`[MiningHandler] Rock ${rockId} not found`);
+            return;
+        }
+
+        console.log(`[MiningHandler] Mining rock ${rockId}`);
+        
+        // Send to server via network
+        this.network.sendRockMine(rockId);
     }
 
-    private handleRockMine(rockId: string): void {
-        console.log(`Mining rock: ${rockId}`);
-        this.miningNetwork.sendRockMine(rockId);
-    }
-
-    private handleRocksUpdate(rocks: RockData[]): void {
-        rocks.forEach(rockData => {
-            const rock = this.rocks.get(rockData.id);
-            if (rock) {
-                rock.update(rockData);
-            }
-        });
-    }
-
-    private handleRockUpdate(rockData: RockData): void {
+    /**
+     * Handle rock update from server (someone mined it)
+     */
+    public handleRockUpdate(rockData: RockData): void {
         const rock = this.rocks.get(rockData.id);
         if (rock) {
             rock.update(rockData);
+            console.log(`[MiningHandler] Updated rock ${rockData.id}: ${rockData.health}/${rockData.maxHealth} HP`);
         }
     }
 
-    private handleMiningReward(data: { ore: number; xp: number; rockId: string }): void {
+    /**
+     * Handle bulk rock updates (initial sync when connecting)
+     */
+    public handleRocksUpdate(rocks: RockData[]): void {
+        console.log(`[MiningHandler] Received ${rocks.length} rock updates`);
+        rocks.forEach(rockData => {
+            this.handleRockUpdate(rockData);
+        });
+    }
+
+    /**
+     * Handle mining reward from server
+     */
+    public handleMiningReward(data: { ore: number; xp: number; rockId: string }): void {
         this.oreCollected += data.ore;
         this.miningXP += data.xp;
         
-        console.log(`+${data.ore} ore, +${data.xp} XP`);
-        console.log(`Total: ${this.oreCollected} ore, ${this.miningXP} XP`);
+        console.log(`[MiningHandler] Mining reward: +${data.ore} ore, +${data.xp} XP (Total: ${this.oreCollected} ore, ${this.miningXP} XP)`);
+        
+        // TODO: Update UI to show stats
+    }
+
+    /**
+     * Get the rocks Map (for InteractionHandler)
+     */
+    public getRocks(): Map<string, Rock> {
+        return this.rocks;
+    }
+
+    /**
+     * Get mining stats (for UI display)
+     */
+    public getStats() {
+        return {
+            level: this.miningLevel,
+            xp: this.miningXP,
+            ore: this.oreCollected
+        };
+    }
+
+    /**
+     * Clean up all rocks when game closes
+     */
+    public dispose(): void {
+        this.rocks.forEach(rock => rock.dispose());
+        this.rocks.clear();
+        console.log('[MiningHandler] Disposed');
     }
 }
 ```
 
-### Step 5: Create Server-Side Handler
+---
 
-Create `server/src/game/handlers/RockHandler.ts`:
+### STEP 4: Update Network.ts to Include Mining (CLIENT)
+
+**Location:** `client/src/game/network/Network.ts`
+
+**What to do:** Add Mining to the main Network class
+
+#### 4.1: Add Import
+
+**Find this part** (around line 6):
+```typescript
+import { WoodcuttingNetwork } from './Woodcutting';
+```
+
+**Add below it:**
+```typescript
+import { MiningNetwork } from './Mining';
+```
+
+#### 4.2: Add Property
+
+**Find this part** (around line 47):
+```typescript
+    private woodcutting: WoodcuttingNetwork;
+```
+
+**Add below it:**
+```typescript
+    private mining: MiningNetwork;
+```
+
+#### 4.3: Add to NetworkCallbacks Interface
+
+**Find this interface** (around line 14):
+```typescript
+export interface NetworkCallbacks {
+    onConnect?: () => void;
+    onDisconnect?: () => void;
+    onWelcome?: (data: any) => void;
+    onPlayerJoined?: (data: any) => void;
+    onPlayerLeft?: (data: { playerId: string; totalPlayers: number }) => void;
+    onPlayerMove?: (data: PlayerData) => void;
+    onPlayersUpdate?: (players: PlayerData[]) => void;
+    onPlayerMessage?: (data: any) => void;
+    onConnectionError?: (error: Error) => void;
+    onTreeUpdate?: (treeData: TreeData) => void;
+    onTreesUpdate?: (trees: TreeData[]) => void;
+    onWoodcuttingReward?: (data: { logs: number; xp: number; treeId: string }) => void;
+}
+```
+
+**Add these lines at the end** (before the closing `}`):
+```typescript
+    onRockUpdate?: (rockData: any) => void;
+    onRocksUpdate?: (rocks: any[]) => void;
+    onMiningReward?: (data: { ore: number; xp: number; rockId: string }) => void;
+```
+
+#### 4.4: Initialize in Constructor
+
+**Find the end of the constructor** (around line 95):
+```typescript
+        if (callbacks.onWoodcuttingReward) {
+            this.woodcutting.onWoodcuttingReward(callbacks.onWoodcuttingReward);
+        }
+    }
+```
+
+**Add before the closing `}`:**
+```typescript
+        // Initialize mining network
+        this.mining = new MiningNetwork(this.socket);
+        if (callbacks.onRockUpdate) {
+            this.mining.onRockUpdate(callbacks.onRockUpdate);
+        }
+        if (callbacks.onRocksUpdate) {
+            this.mining.onRocksUpdate(callbacks.onRocksUpdate);
+        }
+        if (callbacks.onMiningReward) {
+            this.mining.onMiningReward(callbacks.onMiningReward);
+        }
+```
+
+#### 4.5: Add Public Method
+
+**Find this part** (around line 110):
+```typescript
+    public sendTreeChop(treeId: string): void {
+        this.woodcutting.sendTreeChop(treeId);
+    }
+```
+
+**Add below it:**
+```typescript
+    public sendRockMine(rockId: string): void {
+        this.mining.sendRockMine(rockId);
+    }
+```
+
+---
+
+### STEP 5: Update InteractionHandler (CLIENT)
+
+**Location:** `client/src/game/handlers/InteractionHandler.ts`
+
+#### 5.1: Add Import
+
+**Find the imports** (around line 1):
+```typescript
+import * as BABYLON from '@babylonjs/core';
+import type { Tree } from '../Tree';
+import type { PlayerHandler } from './PlayerHandler';
+```
+
+**Add:**
+```typescript
+import type { Rock } from '../Rock';
+```
+
+#### 5.2: Update Constructor Parameters
+
+**Find:**
+```typescript
+    constructor(
+        scene: BABYLON.Scene,
+        trees: Map<string, Tree>,
+        playerHandler: PlayerHandler,
+        onTreeChop: (treeId: string) => void,
+        onPlayerSelected?: (...) => void
+    ) {
+```
+
+**Replace with:**
+```typescript
+    constructor(
+        scene: BABYLON.Scene,
+        trees: Map<string, Tree>,
+        rocks: Map<string, Rock>,
+        playerHandler: PlayerHandler,
+        onTreeChop: (treeId: string) => void,
+        onRockMine: (rockId: string) => void,
+        onPlayerSelected?: (playerData: { name: string; health: number; maxHealth: number; mesh: BABYLON.Mesh | null } | null) => void
+    ) {
+```
+
+#### 5.3: Add Properties
+
+**Find:**
+```typescript
+    private scene: BABYLON.Scene;
+    private trees: Map<string, Tree>;
+    private playerHandler: PlayerHandler;
+    private onTreeChop: (treeId: string) => void;
+    private onPlayerSelected?: (...) => void;
+```
+
+**Replace with:**
+```typescript
+    private scene: BABYLON.Scene;
+    private trees: Map<string, Tree>;
+    private rocks: Map<string, Rock>;
+    private playerHandler: PlayerHandler;
+    private onTreeChop: (treeId: string) => void;
+    private onRockMine: (rockId: string) => void;
+    private onPlayerSelected?: (playerData: { name: string; health: number; maxHealth: number; mesh: BABYLON.Mesh | null } | null) => void;
+```
+
+#### 5.4: Update Constructor Body
+
+**Find:**
+```typescript
+        this.scene = scene;
+        this.trees = trees;
+        this.playerHandler = playerHandler;
+        this.onTreeChop = onTreeChop;
+        this.onPlayerSelected = onPlayerSelected;
+```
+
+**Replace with:**
+```typescript
+        this.scene = scene;
+        this.trees = trees;
+        this.rocks = rocks;
+        this.playerHandler = playerHandler;
+        this.onTreeChop = onTreeChop;
+        this.onRockMine = onRockMine;
+        this.onPlayerSelected = onPlayerSelected;
+```
+
+#### 5.5: Add Rock Click Detection
+
+**Find in setupPointerInteraction** (around line 60):
+```typescript
+            // Check if we clicked a tree
+            if (pickedMesh.metadata?.type === 'tree') {
+                const treeId = pickedMesh.metadata.treeId;
+                if (treeId) {
+                    this.handleTreeClick(treeId);
+                }
+                return;
+            }
+```
+
+**Add below it:**
+```typescript
+            // Check if we clicked a rock
+            if (pickedMesh.metadata?.type === 'rock') {
+                const rockId = pickedMesh.metadata.rockId;
+                if (rockId) {
+                    this.handleRockClick(rockId);
+                }
+                return;
+            }
+```
+
+#### 5.6: Add Rock Click Handler
+
+**Find handleTreeClick method** (around line 85):
+```typescript
+    private handleTreeClick(treeId: string): void {
+        console.log(`[InteractionHandler] Clicked tree: ${treeId}`);
+        this.onTreeChop(treeId);
+    }
+```
+
+**Add below it:**
+```typescript
+    private handleRockClick(rockId: string): void {
+        console.log(`[InteractionHandler] Clicked rock: ${rockId}`);
+        this.onRockMine(rockId);
+    }
+```
+
+---
+
+### STEP 6: Update GameNetworkHandler (CLIENT)
+
+**Location:** `client/src/game/handlers/GameNetworkHandler.ts`
+
+#### 6.1: Update Constructor
+
+**Find:**
+```typescript
+    constructor(
+        onPlayerMove: (data: PlayerData) => void,
+        onPlayerDisconnect: (playerId: string) => void,
+        onPlayersUpdate: (players: PlayerData[]) => void,
+        getSocketId: () => string,
+        onMessageReceived: (data: { playerId: string; username: string; message: string }) => void,
+        onTreeUpdate: (treeData: TreeData) => void,
+        onTreesUpdate: (trees: TreeData[]) => void,
+        onWoodcuttingReward: (data: { logs: number; xp: number; treeId: string }) => void
+    ) {
+```
+
+**Replace with:**
+```typescript
+    constructor(
+        onPlayerMove: (data: PlayerData) => void,
+        onPlayerDisconnect: (playerId: string) => void,
+        onPlayersUpdate: (players: PlayerData[]) => void,
+        getSocketId: () => string,
+        onMessageReceived: (data: { playerId: string; username: string; message: string }) => void,
+        onTreeUpdate: (treeData: TreeData) => void,
+        onTreesUpdate: (trees: TreeData[]) => void,
+        onWoodcuttingReward: (data: { logs: number; xp: number; treeId: string }) => void,
+        onRockUpdate: (rockData: any) => void,
+        onRocksUpdate: (rocks: any[]) => void,
+        onMiningReward: (data: { ore: number; xp: number; rockId: string }) => void
+    ) {
+```
+
+#### 6.2: Update Callbacks Object
+
+**Find the end of the callbacks object** (around line 42):
+```typescript
+            onTreeUpdate: (treeData: TreeData) => onTreeUpdate(treeData),
+            onTreesUpdate: (trees: TreeData[]) => onTreesUpdate(trees),
+            onWoodcuttingReward: (data: { logs: number; xp: number; treeId: string }) => onWoodcuttingReward(data)
+        };
+```
+
+**Add before the closing `};`:**
+```typescript
+            onRockUpdate: (rockData: any) => onRockUpdate(rockData),
+            onRocksUpdate: (rocks: any[]) => onRocksUpdate(rocks),
+            onMiningReward: (data: { ore: number; xp: number; rockId: string }) => onMiningReward(data)
+```
+
+---
+
+### STEP 7: Update Game.tsx (CLIENT)
+
+**Location:** `client/src/game/Game.tsx`
+
+#### 7.1: Add Import
+
+**Find:**
+```typescript
+import { WoodcuttingHandler } from './handlers/WoodcuttingHandler';
+```
+
+**Add below it:**
+```typescript
+import { MiningHandler } from './handlers/MiningHandler';
+```
+
+#### 7.2: Add Property
+
+**Find the handlers section** (around line 38):
+```typescript
+    private woodcuttingHandler!: WoodcuttingHandler;
+    private playerHandler!: PlayerHandler;
+    private interactionHandler!: InteractionHandler;
+    private chatHandler!: ChatHandler;
+    private movementHandler!: MovementHandler;
+```
+
+**Add:**
+```typescript
+    private miningHandler!: MiningHandler;
+```
+
+#### 7.3: Update GameNetworkHandler Creation
+
+**Find:**
+```typescript
+        this.networkHandler = new GameNetworkHandler(
+            (data) => this.playerHandler.updateRemotePlayer(data),
+            (playerId) => this.playerHandler.removeRemotePlayer(playerId),
+            (players) => this.playerHandler.handlePlayersUpdate(players),
+            () => this.network?.getSocketId() || '',
+            (msg) => this.chatHandler?.handleMessageReceived(msg),
+            (treeData) => this.woodcuttingHandler?.handleTreeUpdate(treeData),
+            (trees) => this.woodcuttingHandler?.handleTreesUpdate(trees),
+            (reward) => this.woodcuttingHandler?.handleWoodcuttingReward(reward)
+        );
+```
+
+**Replace with:**
+```typescript
+        this.networkHandler = new GameNetworkHandler(
+            (data) => this.playerHandler.updateRemotePlayer(data),
+            (playerId) => this.playerHandler.removeRemotePlayer(playerId),
+            (players) => this.playerHandler.handlePlayersUpdate(players),
+            () => this.network?.getSocketId() || '',
+            (msg) => this.chatHandler?.handleMessageReceived(msg),
+            (treeData) => this.woodcuttingHandler?.handleTreeUpdate(treeData),
+            (trees) => this.woodcuttingHandler?.handleTreesUpdate(trees),
+            (reward) => this.woodcuttingHandler?.handleWoodcuttingReward(reward),
+            (rockData) => this.miningHandler?.handleRockUpdate(rockData),
+            (rocks) => this.miningHandler?.handleRocksUpdate(rocks),
+            (reward) => this.miningHandler?.handleMiningReward(reward)
+        );
+```
+
+#### 7.4: Initialize MiningHandler
+
+**Find:**
+```typescript
+        // Initialize woodcutting handler (creates trees and needs network)
+        this.woodcuttingHandler = new WoodcuttingHandler(this.scene, this.network);
+```
+
+**Add below it:**
+```typescript
+        // Initialize mining handler (creates rocks and needs network)
+        this.miningHandler = new MiningHandler(this.scene, this.network);
+```
+
+#### 7.5: Update InteractionHandler Creation
+
+**Find:**
+```typescript
+        this.interactionHandler = new InteractionHandler(
+            this.scene,
+            this.woodcuttingHandler.getTrees(),
+            this.playerHandler,
+            (treeId) => this.woodcuttingHandler.handleTreeChop(treeId),
+            this.onPlayerSelected
+        );
+```
+
+**Replace with:**
+```typescript
+        this.interactionHandler = new InteractionHandler(
+            this.scene,
+            this.woodcuttingHandler.getTrees(),
+            this.miningHandler.getRocks(),
+            this.playerHandler,
+            (treeId) => this.woodcuttingHandler.handleTreeChop(treeId),
+            (rockId) => this.miningHandler.handleRockMine(rockId),
+            this.onPlayerSelected
+        );
+```
+
+#### 7.6: Add to Dispose
+
+**Find:**
+```typescript
+        // Clean up handlers (which clean up remote players and trees)
+        this.playerHandler.dispose();
+        this.woodcuttingHandler.dispose();
+```
+
+**Add:**
+```typescript
+        this.miningHandler.dispose();
+```
+
+---
+
+### STEP 8: Create RockHandler (SERVER)
+
+**Location:** `server/src/game/handlers/RockHandler.ts`
+
+**What this file does:** Server-side logic for all rocks
+
+**Create this new file:**
 
 ```typescript
-import type { Socket, Server } from 'socket.io';
+import type { Server, Socket } from 'socket.io';
 
-export interface RockState {
+// Rock state interface
+interface RockState {
     id: string;
     position: { x: number; z: number };
     health: number;
     maxHealth: number;
     isAlive: boolean;
-    respawnTimeout?: NodeJS.Timeout;
+    respawnTimer?: NodeJS.Timeout;
 }
 
+/**
+ * RockHandler - Server-side mining system
+ * 
+ * Responsibilities:
+ * - Manage all rock states
+ * - Handle mining damage
+ * - Give rewards (ore + XP)
+ * - Respawn rocks after 45 seconds
+ * - Broadcast rock updates to all clients
+ */
 export class RockHandler {
-    private rocks: Map<string, RockState>;
     private io: Server;
+    private rocks: Map<string, RockState> = new Map();
     
-    private readonly ROCK_MINE_DAMAGE = 15;
-    private readonly ROCK_RESPAWN_TIME = 45000;  // 45 seconds
-    private readonly MINING_XP_PER_ORE = 30;
+    // Constants
+    private readonly MINE_DAMAGE = 15;        // Damage per hit
+    private readonly ROCK_MAX_HEALTH = 120;   // Total health
+    private readonly RESPAWN_TIME = 45000;    // 45 seconds
+    private readonly ORE_REWARD = 1;          // Ore per mine
+    private readonly XP_REWARD = 30;          // XP per mine
 
     constructor(io: Server) {
         this.io = io;
-        this.rocks = new Map<string, RockState>();
         this.initializeRocks();
     }
 
+    /**
+     * Create all rocks
+     * MUST MATCH CLIENT POSITIONS!
+     */
     private initializeRocks(): void {
         const rockPositions = [
-            { x: 15, z: 15 },
-            { x: -15, z: 15 },
-            { x: 15, z: -15 },
-            // ... more positions (match client)
+            { x: 8, z: 8 },
+            { x: -8, z: 8 },
+            { x: 8, z: -8 },
+            { x: -8, z: -8 },
+            { x: 12, z: 0 },
+            { x: -12, z: 0 },
+            { x: 0, z: 12 },
+            { x: 0, z: -12 },
+            { x: 5, z: 5 },
+            { x: -5, z: -5 },
         ];
 
         rockPositions.forEach((pos, index) => {
-            const rock: RockState = {
-                id: `rock-${index}`,
+            const rockId = `rock-${index + 1}`;
+            this.rocks.set(rockId, {
+                id: rockId,
                 position: pos,
-                health: 120,
-                maxHealth: 120,
+                health: this.ROCK_MAX_HEALTH,
+                maxHealth: this.ROCK_MAX_HEALTH,
                 isAlive: true
-            };
-            this.rocks.set(rock.id, rock);
+            });
         });
 
         console.log(`[RockHandler] Initialized ${this.rocks.size} rocks`);
     }
 
-    public getRocks(): RockState[] {
-        return Array.from(this.rocks.values());
-    }
-
-    public handleRockMine(socket: Socket, data: { rockId: string }): void {
-        const rock = this.rocks.get(data.rockId);
+    /**
+     * Handle player mining a rock
+     */
+    public handleRockMine(socket: Socket, rockId: string): void {
+        const rock = this.rocks.get(rockId);
         
-        if (!rock || !rock.isAlive) {
+        if (!rock) {
+            console.error(`[RockHandler] Rock ${rockId} not found`);
+            return;
+        }
+
+        if (!rock.isAlive) {
+            console.log(`[RockHandler] Rock ${rockId} is depleted`);
             return;
         }
 
         // Apply damage
-        rock.health -= this.ROCK_MINE_DAMAGE;
+        rock.health -= this.MINE_DAMAGE;
+        console.log(`[RockHandler] Rock ${rockId} mined: ${rock.health}/${rock.maxHealth} HP`);
 
+        // Check if depleted
         if (rock.health <= 0) {
             rock.health = 0;
             rock.isAlive = false;
-
-            // Send reward to player
-            socket.emit('miningReward', {
-                ore: 1,
-                xp: this.MINING_XP_PER_ORE,
-                rockId: rock.id
-            });
-
-            // Schedule respawn
-            this.scheduleRockRespawn(rock.id);
+            console.log(`[RockHandler] Rock ${rockId} depleted, respawning in 45s`);
+            this.scheduleRockRespawn(rockId);
         }
 
-        // Broadcast rock state to all players
+        // Give rewards
+        socket.emit('miningReward', {
+            ore: this.ORE_REWARD,
+            xp: this.XP_REWARD,
+            rockId: rockId
+        });
+
+        // Broadcast update to ALL clients
         this.broadcastRockUpdate(rock);
     }
 
+    /**
+     * Schedule rock respawn
+     */
     private scheduleRockRespawn(rockId: string): void {
         const rock = this.rocks.get(rockId);
         if (!rock) return;
 
-        // Clear existing timeout if any
-        if (rock.respawnTimeout) {
-            clearTimeout(rock.respawnTimeout);
+        if (rock.respawnTimer) {
+            clearTimeout(rock.respawnTimer);
         }
 
-        rock.respawnTimeout = setTimeout(() => {
+        rock.respawnTimer = setTimeout(() => {
             rock.health = rock.maxHealth;
             rock.isAlive = true;
-            rock.respawnTimeout = undefined;
-
             console.log(`[RockHandler] Rock ${rockId} respawned`);
             this.broadcastRockUpdate(rock);
-        }, this.ROCK_RESPAWN_TIME);
+        }, this.RESPAWN_TIME);
     }
 
+    /**
+     * Broadcast to all clients
+     */
     private broadcastRockUpdate(rock: RockState): void {
         this.io.emit('rockUpdate', {
             id: rock.id,
@@ -508,297 +1122,374 @@ export class RockHandler {
         });
     }
 
+    /**
+     * Get all rocks (for new player)
+     */
+    public getAllRocks(): any[] {
+        return Array.from(this.rocks.values()).map(rock => ({
+            id: rock.id,
+            position: rock.position,
+            health: rock.health,
+            maxHealth: rock.maxHealth,
+            isAlive: rock.isAlive
+        }));
+    }
+
+    /**
+     * Cleanup timers
+     */
     public cleanup(): void {
-        // Clear all respawn timers
         this.rocks.forEach(rock => {
-            if (rock.respawnTimeout) {
-                clearTimeout(rock.respawnTimeout);
+            if (rock.respawnTimer) {
+                clearTimeout(rock.respawnTimer);
             }
         });
-        this.rocks.clear();
+        console.log('[RockHandler] Cleanup complete');
     }
 }
 ```
 
-### Step 6: Integrate Handler Into GameServer
+---
 
-Update `server/src/game/GameServer.ts`:
+### STEP 9: Update GameServer.ts (SERVER)
 
+**Location:** `server/src/game/GameServer.ts`
+
+#### 9.1: Add Import
+
+**Find:**
+```typescript
+import { TreeHandler } from './handlers/TreeHandler.js';
+```
+
+**Add below it:**
 ```typescript
 import { RockHandler } from './handlers/RockHandler.js';
+```
 
-export class GameServer {
+#### 9.2: Add Property
+
+**Find:**
+```typescript
+    private treeHandler: TreeHandler;
+```
+
+**Add below it:**
+```typescript
     private rockHandler: RockHandler;
+```
 
-    constructor(httpServer: any) {
-        // ... existing setup ...
-        
-        // Initialize handlers
+#### 9.3: Initialize in Constructor
+
+**Find:**
+```typescript
         this.treeHandler = new TreeHandler(this.io);
+```
+
+**Add below it:**
+```typescript
         this.rockHandler = new RockHandler(this.io);
-        
-        // ... rest of constructor ...
-    }
+```
 
-    private setupConnectionHandlers(): void {
-        this.io.on('connection', async (socket) => {
-            // ... existing connection logic ...
-            
-            // Send initial rock states
-            socket.emit('rocksUpdate', this.rockHandler.getRocks());
-            
-            // ... existing event listeners ...
-            
-            // Mining events
-            socket.on('rockMine', (data: { rockId: string }) => {
-                this.rockHandler.handleRockMine(socket, data);
+#### 9.4: Send Rocks to New Players
+
+**Find** (in the connection handler):
+```typescript
+            // Send all trees to the new player
+            socket.emit('treesUpdate', this.treeHandler.getAllTrees());
+```
+
+**Add below it:**
+```typescript
+            // Send all rocks to the new player
+            socket.emit('rocksUpdate', this.rockHandler.getAllRocks());
+```
+
+#### 9.5: Add Rock Mine Event Handler
+
+**Find:**
+```typescript
+            socket.on('treeChop', (data) => {
+                this.treeHandler.handleTreeChop(socket, data.treeId);
             });
-        });
-    }
+```
 
-    public shutdown(): void {
-        // ... existing cleanup ...
+**Add below it:**
+```typescript
+            // Handle rock mining
+            socket.on('rockMine', (data) => {
+                this.rockHandler.handleRockMine(socket, data.rockId);
+            });
+```
+
+#### 9.6: Update Cleanup
+
+**Find:**
+```typescript
+    public cleanup(): void {
+        this.treeHandler.cleanup();
+    }
+```
+
+**Replace with:**
+```typescript
+    public cleanup(): void {
+        this.treeHandler.cleanup();
         this.rockHandler.cleanup();
     }
-}
-```
-
-### Step 7: Update Network Class (Optional)
-
-If you want to organize network modules, update `client/src/game/network/Network.ts`:
-
-```typescript
-import { MiningNetwork } from './Mining';
-
-export class Network {
-    public mining: MiningNetwork;
-
-    constructor(serverUrl: string, token: string) {
-        // ... existing setup ...
-        
-        this.mining = new MiningNetwork(this.socket);
-    }
-
-    public disconnect(): void {
-        // ... existing cleanup ...
-        this.mining.cleanup();
-    }
-}
 ```
 
 ---
 
-## Example: Woodcutting Implementation
+## Part 4: Testing Your Feature
 
-### Client Structure
-
-**`client/src/game/Tree.ts`**
-- Manages tree visual (trunk + leaves)
-- Health bar rendering
-- Click interaction callback
-- State updates from network
-
-**`client/src/game/network/Woodcutting.ts`**
-- `sendTreeChop(treeId)` - Send chop action
-- `onTreeUpdate(callback)` - Listen for tree state changes
-- `onTreesUpdate(callback)` - Initial tree sync
-- `onWoodcuttingReward(callback)` - Receive logs/XP
-
-**`client/src/game/Game.tsx`**
-- Creates 20 trees at startup
-- Raycasting for tree clicks
-- Delegates chop action to network
-- Updates tree state from server
-- Tracks woodcutting stats (level, XP, logs)
-
-### Server Structure
-
-**`server/src/game/handlers/TreeHandler.ts`**
-- Initializes 20 tree states
-- `handleTreeChop()` - Validates and applies damage
-- Awards logs and XP to player
-- `scheduleTreeRespawn()` - 30-second respawn timer
-- Broadcasts tree updates to all clients
-
-**`server/src/game/GameServer.ts`**
-- Instantiates TreeHandler
-- Routes `treeChop` events to TreeHandler
-- Sends initial tree states on player connect
-
-### Event Flow
-
-1. **Player clicks tree** → Client detects via raycasting
-2. **Client sends `treeChop`** → Contains treeId
-3. **Server validates** → TreeHandler checks if tree is alive
-4. **Server applies damage** → 20 damage per chop
-5. **Server broadcasts `treeUpdate`** → All clients see health decrease
-6. **If tree depleted** → Server sends `woodcuttingReward` to player
-7. **Server schedules respawn** → 30 seconds later, tree resets
-8. **Server broadcasts `treeUpdate`** → All clients see tree respawn
-
----
-
-## Testing Your Feature
-
-### 1. Start the Servers
-
+### 1. **Start the Server**
 ```bash
-# Terminal 1: Start backend server
 cd server
 npm run dev
+```
 
-# Terminal 2: Start frontend client
+Wait for: `[RockHandler] Initialized 10 rocks`
+
+### 2. **Start the Client**
+```bash
 cd client
 npm run dev
 ```
 
-### 2. Test Checklist
+### 3. **Test in Browser**
 
-- [ ] Feature entities spawn at correct positions
-- [ ] Clicking/interacting triggers network event
-- [ ] Health decreases with each action
-- [ ] Health bar updates visually
-- [ ] Entity disappears when depleted
-- [ ] Player receives rewards (items/XP)
-- [ ] Entity respawns after configured time
-- [ ] Multiple players see same state (test with 2+ tabs)
-- [ ] No console errors on client or server
-- [ ] Network events logged in console
+1. Open http://localhost:5173
+2. Login
+3. **Look for gray spheres** around the map
+4. **Click a rock** - you should see:
+   - Console: `[MiningHandler] Mining rock rock-1`
+   - Health bar decreases
+   - Console: `[MiningHandler] Mining reward: +1 ore, +30 XP`
+5. **Keep clicking** until rock disappears (0 health)
+6. **Wait 45 seconds** - rock should reappear
 
-### 3. Debugging Tips
+### 4. **Test Multiplayer**
 
-**Client Console (`F12` in browser):**
-```javascript
-// Check if entities exist
-console.log(game.rocks.size);  // Should match number of rocks
+1. Open **second browser tab** (incognito)
+2. Login with different account
+3. **Mine a rock in Tab 1**
+4. **Watch it update in Tab 2** instantly!
 
-// Check network events
-network.socket.on('rockUpdate', (data) => console.log('Rock update:', data));
-```
+---
 
-**Server Console:**
+## Part 5: Troubleshooting
+
+### ❌ Problem: "Rock doesn't show up"
+
+**Checklist:**
+- [ ] Did you create `Rock.ts`?
+- [ ] Did you create `MiningHandler.ts`?
+- [ ] Did you import MiningHandler in Game.tsx?
+- [ ] Did you initialize miningHandler?
+- [ ] Open browser console (F12) - any errors?
+
+**Solution:** Check console for errors. Verify createRocks() is called.
+
+---
+
+### ❌ Problem: "Clicking does nothing"
+
+**Checklist:**
+- [ ] Did you update InteractionHandler?
+- [ ] Did you add rock click detection?
+- [ ] Did you add handleRockClick method?
+- [ ] Is `mesh.metadata = { type: 'rock', rockId: ... }` set?
+- [ ] Is `mesh.isPickable = true`?
+
+**Solution:** Add `console.log` in handleRockClick to see if it's called.
+
+---
+
+### ❌ Problem: "Health bar doesn't update"
+
+**Checklist:**
+- [ ] Is server broadcasting 'rockUpdate' event?
+- [ ] Is client listening for 'rockUpdate'?
+- [ ] Are rock IDs matching (client vs server)?
+- [ ] Open Network tab in DevTools - see Socket.IO events?
+
+**Solution:** 
+1. Press F12 → Network tab → WS (WebSocket)
+2. Click rock
+3. Look for `rockMine` and `rockUpdate` messages
+
+---
+
+### ❌ Problem: "Rock doesn't respawn"
+
+**Checklist:**
+- [ ] Did rock.isAlive become false?
+- [ ] Is setTimeout called?
+- [ ] Is RESPAWN_TIME correct (45000 ms)?
+- [ ] Check server console for respawn log
+
+**Solution:** Add `console.log` in scheduleRockRespawn to debug.
+
+---
+
+### ❌ Problem: "Client and server positions don't match"
+
+**Fix:** Rock positions in `RockHandler.ts` MUST be identical to `MiningHandler.ts`
+
+**Copy this array to both files:**
 ```typescript
-// Add logs in handler
-console.log(`[RockHandler] Player ${socket.id} mined rock ${rockId}`);
+const rockPositions = [
+    { x: 8, z: 8 },
+    { x: -8, z: 8 },
+    { x: 8, z: -8 },
+    { x: -8, z: -8 },
+    { x: 12, z: 0 },
+    { x: -12, z: 0 },
+    { x: 0, z: 12 },
+    { x: 0, z: -12 },
+    { x: 5, z: 5 },
+    { x: -5, z: -5 },
+];
 ```
 
 ---
 
-## Best Practices
+## Part 6: Key Patterns to Remember
 
-### 1. **Separation of Concerns**
-- **Entity classes** (Tree.ts, Rock.ts) handle visuals only
-- **Network classes** (Woodcutting.ts, Mining.ts) handle events only
-- **Handlers** (TreeHandler.ts, RockHandler.ts) handle game logic only
-- **Game.tsx** coordinates between all layers
-
-### 2. **Server Authority**
-- Server validates all actions (is rock alive? is player in range?)
-- Server calculates rewards, damage, and timers
-- Client displays what server tells it (never calculates own rewards)
-
-### 3. **Synchronization**
-- Send initial state on player connect (`rocksUpdate` event)
-- Broadcast state changes to ALL clients (`rockUpdate` event)
-- Use unique IDs for entities (e.g., `rock-0`, `rock-1`)
-
-### 4. **Performance**
-- Reuse meshes/materials where possible
-- Dispose of resources in cleanup methods
-- Use billboard mode for 2D elements (health bars, text)
-
-### 5. **Code Organization**
+### 1. **The Flow**
 ```
-Feature Name: Mining
-├── Client
-│   ├── Entity class: Rock.ts
-│   ├── Network module: Mining.ts
-│   └── Integration: Game.tsx (createRocks, setupRockInteraction, handle events)
-└── Server
-    ├── Handler: RockHandler.ts
-    └── Integration: GameServer.ts (route events, send initial state)
+User Click → InteractionHandler → MiningHandler → Network → 
+→ GameServer → RockHandler → Broadcast → All Clients Update
 ```
 
-### 6. **TypeScript Best Practices**
-- Define interfaces for data structures (`RockData`, `RockState`)
-- Use strict typing (avoid `any`)
-- Export interfaces that are shared between files
+### 2. **File Structure**
+```
+CLIENT:
+- Rock.ts              (entity class)
+- MiningHandler.ts     (feature logic)
+- network/Mining.ts    (network events)
 
-### 7. **Naming Conventions**
-- **Events**: `camelCase` (e.g., `rockMine`, `treeChop`)
-- **Classes**: `PascalCase` (e.g., `RockHandler`, `Tree`)
-- **Files**: `PascalCase` for classes (e.g., `Rock.ts`), `camelCase` for modules (e.g., `mining.ts`)
+SERVER:
+- handlers/RockHandler.ts  (server logic)
+```
 
----
+### 3. **Naming Convention**
+- Entity: `Rock.ts`
+- Handler: `MiningHandler.ts` (client), `RockHandler.ts` (server)
+- Network: `Mining.ts`
+- Events: `rockMine`, `rockUpdate`, `rocksUpdate`, `miningReward`
 
-## Common Patterns
-
-### Pattern 1: Clickable Entities
+### 4. **Initialization Order**
 ```typescript
-// Set mesh as pickable
-mesh.isPickable = true;
-mesh.metadata = { type: 'rock', id: this.id };
-
-// Detect clicks in Game.tsx
-this.scene.onPointerDown = (evt, pickResult) => {
-    if (pickResult.hit && pickResult.pickedMesh?.metadata?.type === 'rock') {
-        // Handle interaction
-    }
-};
-```
-
-### Pattern 2: Health Bars
-```typescript
-// Use two planes: background (red) and foreground (green)
-// Use billboard mode to face camera
-healthBar.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
-
-// Scale foreground based on health percentage
-foreground.scaling.x = health / maxHealth;
-```
-
-### Pattern 3: Respawn Timers
-```typescript
-// Store timeout reference to clear if needed
-respawnTimeout = setTimeout(() => {
-    entity.health = entity.maxHealth;
-    entity.isAlive = true;
-    broadcastUpdate(entity);
-}, RESPAWN_TIME);
-```
-
-### Pattern 4: Initial State Sync
-```typescript
-// Server: Send all entity states on connect
-socket.emit('rocksUpdate', this.rockHandler.getRocks());
-
-// Client: Update all entities
-this.onRocksUpdate((rocks) => {
-    rocks.forEach(rockData => {
-        this.rocks.get(rockData.id)?.update(rockData);
-    });
-});
+1. Scene
+2. PlayerHandler
+3. SetupScene (creates local player)
+4. NetworkHandler
+5. Network connection
+6. ChatHandler
+7. MovementHandler
+8. WoodcuttingHandler
+9. MiningHandler          ← Your new handler
+10. InteractionHandler    ← Must be LAST (needs all others)
 ```
 
 ---
 
-## Congratulations!
+## Part 7: Complete Checklist
 
-You now understand how to add RuneScape-style skilling features to Sacred Heart. Follow this pattern for:
-- **Fishing** (fish spots, fishing rods, fish inventory)
-- **Combat** (NPCs, combat stats, damage calculation)
-- **Crafting** (workbenches, recipes, item creation)
-- **Farming** (plant seeds, growth timers, harvest)
+Before testing, verify:
 
-The architecture is designed to scale to any feature you can imagine!
+**CLIENT FILES:**
+- [ ] Created `client/src/game/Rock.ts`
+- [ ] Created `client/src/game/network/Mining.ts`
+- [ ] Created `client/src/game/handlers/MiningHandler.ts`
+- [ ] Updated `client/src/game/network/Network.ts` (5 changes)
+- [ ] Updated `client/src/game/handlers/InteractionHandler.ts` (6 changes)
+- [ ] Updated `client/src/game/handlers/GameNetworkHandler.ts` (2 changes)
+- [ ] Updated `client/src/game/Game.tsx` (6 changes)
+
+**SERVER FILES:**
+- [ ] Created `server/src/game/handlers/RockHandler.ts`
+- [ ] Updated `server/src/game/GameServer.ts` (6 changes)
+
+**TESTING:**
+- [ ] Server starts without errors
+- [ ] Client starts without errors
+- [ ] 10 rocks visible in game
+- [ ] Clicking rock shows console log
+- [ ] Health bar decreases
+- [ ] Rewards shown in console
+- [ ] Rock disappears at 0 health
+- [ ] Rock respawns after 45s
+- [ ] Second player sees updates
 
 ---
 
-## Need Help?
+## Congratulations! 🎉
 
-- Check existing implementations: `Tree.ts`, `TreeHandler.ts`, `Woodcutting.ts`
-- Look at console logs for network events and errors
-- Test with multiple browser tabs to ensure synchronization works
-- Review this tutorial again for the specific step you're stuck on
+You've successfully added Mining to Sacred Heart!
 
-Happy coding! 🎮
+### What You Learned:
+- ✅ Client-server architecture
+- ✅ Handler pattern
+- ✅ Network events with Socket.IO
+- ✅ Entity classes (Rock)
+- ✅ 3D mesh creation and health bars
+- ✅ Respawn timers
+- ✅ Multiplayer synchronization
+
+### You Can Now Add:
+- 🐟 **Fishing** (FishingSpots)
+- 🔥 **Cooking** (Campfires)
+- ⚔️ **Combat** (NPCs)
+- 🌾 **Farming** (Plants)
+
+**Just follow the same pattern!**
+
+---
+
+## Quick Reference Card
+
+### Adding a New Feature:
+
+1. **Define Requirements** (health, damage, rewards, respawn time)
+2. **Create Entity Class** (CLIENT - what it looks like)
+3. **Create Network Module** (CLIENT - send/receive events)
+4. **Create Handler** (CLIENT - manages all entities)
+5. **Update Network.ts** (CLIENT - add to main network)
+6. **Update InteractionHandler** (CLIENT - detect clicks)
+7. **Update GameNetworkHandler** (CLIENT - route callbacks)
+8. **Update Game.tsx** (CLIENT - initialize handler)
+9. **Create Server Handler** (SERVER - game logic)
+10. **Update GameServer.ts** (SERVER - handle events)
+11. **Test** (both single player and multiplayer)
+
+### Common Event Names:
+- `{feature}Action` - player does something (e.g., `rockMine`)
+- `{entity}Update` - single entity changed (e.g., `rockUpdate`)
+- `{entity}sUpdate` - bulk update (e.g., `rocksUpdate`)
+- `{feature}Reward` - give player rewards (e.g., `miningReward`)
+
+### Common Methods:
+- `handle{Action}` - process player action
+- `update` - update entity visual
+- `dispose` - clean up entity
+- `getAll{Entities}` - get all for new player
+- `broadcast{Entity}Update` - tell all clients
+
+---
+
+## Need More Help?
+
+**Debug Steps:**
+1. Check **browser console** (F12)
+2. Check **server console** (terminal)
+3. Check **Network tab** → WS → See Socket.IO messages
+4. Add `console.log` everywhere to trace flow
+5. Verify event names match EXACTLY (typos break everything)
+6. Verify IDs match (client IDs must equal server IDs)
+
+**Remember:** You're not stupid if this is hard. Game networking is complex! Take breaks, debug methodically, and you'll get it. 💪
+
+You got this! 🚀

@@ -35,6 +35,8 @@ export class Player {
     private chatBubble?: BABYLON.Mesh;                  // Chat message plane
     private chatText?: BABYLON.DynamicTexture;          // Texture for chat text
     private chatTimeout?: number;                       // Timer to hide chat bubble
+    private health: number = 100;                       // Player health
+    private maxHealth: number = 100;                    // Max health
 
     /**
      * Constructor: Create a new player in the world
@@ -68,6 +70,14 @@ export class Player {
             ? new BABYLON.Color3(0, 0, 1)  // Blue for local player
             : new BABYLON.Color3(1, 0, 0); // Red for remote players
         this.mesh.material = material;
+
+        // Make mesh pickable and add metadata for identification
+        this.mesh.isPickable = true;
+        this.mesh.metadata = { 
+            type: 'player', 
+            id: this.id, 
+            playerId: this.id 
+        };
 
         // Set initial position and rotation from database or network
         this.setPosition(playerData.position);
@@ -224,12 +234,20 @@ export class Player {
         return this.mesh;
     }
 
-    public getId(): string {
-        return this.id;
-    }
-
     public getUsername(): string | undefined {
         return this.username;
+    }
+
+    public getHealth(): number {
+        return this.health;
+    }
+
+    public getMaxHealth(): number {
+        return this.maxHealth;
+    }
+
+    public getId(): string {
+        return this.id;
     }
 
     public update(playerData: PlayerData): void {

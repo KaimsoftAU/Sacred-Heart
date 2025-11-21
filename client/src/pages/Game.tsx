@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react';
 import GameClass from '../game/Game';
 import ChatUI from '../components/ChatUI';
+import { PlayerInfoUI } from '../game/components/PlayerInfoUI';
+import * as BABYLON from '@babylonjs/core';
 
 // Props passed from App.tsx after successful login
 interface GameProps {
@@ -23,6 +25,14 @@ const Game: React.FC<GameProps> = ({ player, token, onLogout }) => {
     // Ref: Reference to the game instance so we can call methods on it
     const gameInstanceRef = useRef<GameClass | null>(null);
 
+    // State: Selected player info for UI
+    const [selectedPlayer, setSelectedPlayer] = useState<{
+        name: string;
+        health: number;
+        maxHealth: number;
+        mesh: BABYLON.Mesh | null;
+    } | null>(null);
+
     /**
      * Effect: Initialize the Babylon.js game instance when component mounts
      * Creates game with:
@@ -35,6 +45,9 @@ const Game: React.FC<GameProps> = ({ player, token, onLogout }) => {
         const GameInstance = new GameClass('GameCanvas', player, token, (msg) => {
             // When other players send messages, add them to our chat UI
             setMessages(prev => [...prev, msg]);
+        }, (playerData: { name: string; health: number; maxHealth: number; mesh: BABYLON.Mesh | null } | null) => {
+            // When a player is selected, update UI
+            setSelectedPlayer(playerData);
         });
         gameInstanceRef.current = GameInstance;
         
@@ -58,8 +71,8 @@ const Game: React.FC<GameProps> = ({ player, token, onLogout }) => {
                 message,
                 timestamp: Date.now()
             }]);
-            // Send to server (server will broadcast to others only)
-            gameInstanceRef.current.sendChatMessage(message);
+            // Send to server via chat handler (server will broadcast to others only)
+            gameInstanceRef.current.getChatHandler().sendMessage(message);
         }
     };
   return (
@@ -79,6 +92,15 @@ const Game: React.FC<GameProps> = ({ player, token, onLogout }) => {
         onSendMessage={handleSendMessage}
         username={player.username}
       />
+      {selectedPlayer && (
+        <PlayerInfoUI
+          playerName={selectedPlayer.name}
+          health={selectedPlayer.health}
+          maxHealth={selectedPlayer.maxHealth}
+          playerMesh={selectedPlayer.mesh}
+          onClose={() => setSelectedPlayer(null)}
+        />
+      )}
     </div>
   );
 };
