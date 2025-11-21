@@ -1,5 +1,6 @@
 import * as BABYLON from '@babylonjs/core';
 import { Player, type PlayerData } from './Player';
+import { Tree, type TreeData } from './Tree';
 import { Network } from './network/Network';
 import { GameNetworkHandler } from './handlers/GameNetworkHandler';
 
@@ -30,7 +31,13 @@ class Game {
     private networkHandler: GameNetworkHandler;             // Handles network event callbacks
     private localPlayer: Player | null = null;              // The player controlled by this client
     private remotePlayers: Map<string, Player> = new Map(); // Other players (key = socket ID)
+    private trees: Map<string, Tree> = new Map();           // All trees in the world (key = tree ID)
     private onMessageReceived: (msg: ChatMessage) => void;  // Callback to send messages to React UI
+    
+    // Woodcutting stats
+    private woodcuttingLevel: number = 1;
+    private woodcuttingXP: number = 0;
+    private logsCollected: number = 0;
 
     /**
      * Constructor: Initialize game systems
@@ -61,7 +68,10 @@ class Game {
             (playerId) => this.removeRemotePlayer(playerId),
             (players) => this.handlePlayersUpdate(players),
             () => this.network?.getSocketId() || '',
-            (msg) => this.handleMessageReceived(msg)
+            (msg) => this.handleMessageReceived(msg),
+            (treeData) => this.handleTreeUpdate(treeData),
+            (trees) => this.handleTreesUpdate(trees),
+            (reward) => this.handleWoodcuttingReward(reward)
         );
 
         // Initialize network connection with JWT authentication
@@ -84,6 +94,9 @@ class Game {
         window.addEventListener('resize', () => {
             this.engine.resize();
         });
+
+        // Setup click interaction for trees
+        this.setupTreeInteraction();
     }
 
     /**
@@ -202,6 +215,13 @@ class Game {
         groundMaterial.diffuseColor = new BABYLON.Color3(0.3, 0.5, 0.3);
         ground.material = groundMaterial;
         
+        /**
+         * Create trees around the scene
+         * Trees are simple cylinders (trunk) with cones (leaves) on top
+         * Positioned randomly around the edges of the ground
+         */
+        this.createTrees(scene);
+        
         // Create local player
         const initialPosition = this.playerData.position || { x: 0, y: 0.5, z: 0 };
         const initialRotation = this.playerData.rotation || { x: 0, y: 0, z: 0 };
@@ -223,6 +243,116 @@ class Game {
         return scene;
     }
 
+    /**
+     * Create trees around the scene for decoration and woodcutting
+     * Trees are now interactive Tree class instances
+     * Positioned around the edges of the 50x50 ground
+     */
+    private createTrees(scene: BABYLON.Scene): void {
+        const treePositions = [
+            // North edge
+            { x: -20, z: 20 }, { x: -10, z: 22 }, { x: 0, z: 23 }, { x: 10, z: 22 }, { x: 20, z: 20 },
+            // South edge
+            { x: -20, z: -20 }, { x: -10, z: -22 }, { x: 0, z: -23 }, { x: 10, z: -22 }, { x: 20, z: -20 },
+            // West edge
+            { x: -22, z: -10 }, { x: -23, z: 0 }, { x: -22, z: 10 },
+            // East edge
+            { x: 22, z: -10 }, { x: 23, z: 0 }, { x: 22, z: 10 },
+            // Some scattered in play area
+            { x: -15, z: 5 }, { x: 15, z: -5 }, { x: -8, z: -8 }, { x: 8, z: 8 }
+        ];
+
+        treePositions.forEach((pos, index) => {
+            const treeId = `tree_${index}`;
+            const treeData: TreeData = {
+                id: treeId,
+                position: { x: pos.x, z: pos.z },
+                health: 100,
+                maxHealth: 100,
+                isAlive: true
+            };
+
+            // Create tree with chop callback
+            const tree = new Tree(scene, treeData, (treeId) => this.handleTreeChop(treeId));
+            this.trees.set(treeId, tree);
+        });
+    }
+
+    /**
+     * Setup click interaction for trees
+     * Uses raycasting to detect what was clicked
+     */
+    private setupTreeInteraction(): void {
+        this.scene.onPointerDown = (evt, pickResult) => {
+            // Only handle left click
+            if (evt.button !== 0) return;
+
+            // Check if we clicked something
+            if (pickResult.hit && pickResult.pickedMesh) {
+                const metadata = pickResult.pickedMesh.metadata;
+                
+                // Check if it's a tree
+                if (metadata && metadata.type === 'tree') {
+                    const treeId = metadata.treeId;
+                    const tree = this.trees.get(treeId);
+                    
+                    if (tree && tree.getIsAlive()) {
+                        tree.chop(); // Triggers callback to handleTreeChop
+                    }
+                }
+            }
+        };
+    }
+
+    /**
+     * Handle tree being chopped
+     * Send to server which will update health and broadcast
+     */
+    private handleTreeChop(treeId: string): void {
+        console.log('Player chopping tree:', treeId);
+        // Send to server
+        this.network.sendTreeChop(treeId);
+    }
+
+    /**
+     * Handle tree state update from server
+     * Update local tree instance
+     */
+    private handleTreeUpdate(treeData: TreeData): void {
+        const tree = this.trees.get(treeData.id);
+        if (tree) {
+            tree.update(treeData);
+        }
+    }
+
+    /**
+     * Handle bulk tree update (on initial connection)
+     * Sync all tree states from server
+     */
+    private handleTreesUpdate(trees: TreeData[]): void {
+        trees.forEach(treeData => {
+            const tree = this.trees.get(treeData.id);
+            if (tree) {
+                tree.update(treeData);
+            }
+        });
+    }
+
+    /**
+     * Handle woodcutting reward from server
+     * Update stats and show feedback
+     */
+    private handleWoodcuttingReward(data: { logs: number; xp: number; treeId: string }): void {
+        this.logsCollected += data.logs;
+        this.woodcuttingXP += data.xp;
+        
+        console.log(`Woodcutting reward: +${data.logs} logs, +${data.xp} XP`);
+        console.log(`Total: ${this.logsCollected} logs, ${this.woodcuttingXP} XP`);
+        
+        // TODO: Show visual feedback or update UI
+        // Could show floating text "+1 Log" above player
+    }
+
     public dispose(): void {
         console.log('Disposing game, cleaning up remote players...');
         
@@ -238,6 +368,12 @@ class Game {
             player.dispose();
         });
         this.remotePlayers.clear();
+        
+        // Clean up all trees
+        this.trees.forEach((tree) => {
+            tree.dispose();
+        });
+        this.trees.clear();
         
         // Disconnect from network
         this.network.disconnect();

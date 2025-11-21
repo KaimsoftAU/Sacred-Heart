@@ -1,5 +1,6 @@
 import type { NetworkCallbacks } from '../network/Network';
 import type { PlayerData } from '../Player';
+import type { TreeData } from '../Tree';
 
 /**
  * GameNetworkHandler Class - Handles all network events for the Game
@@ -21,6 +22,9 @@ export class GameNetworkHandler {
     private onPlayersUpdateCallback: (players: PlayerData[]) => void;
     private onMessageCallback: (data: { playerId: string; username: string; message: string }) => void;
     private socketIdGetter: () => string;
+    private onTreeUpdateCallback?: (treeData: TreeData) => void;
+    private onTreesUpdateCallback?: (trees: TreeData[]) => void;
+    private onWoodcuttingRewardCallback?: (data: { logs: number; xp: number; treeId: string }) => void;
 
     /**
      * Constructor: Store callbacks from Game class
@@ -35,13 +39,19 @@ export class GameNetworkHandler {
         onPlayerLeft: (playerId: string) => void,
         onPlayersUpdate: (players: PlayerData[]) => void,
         getSocketId: () => string,
-        onMessage: (data: { playerId: string; username: string; message: string }) => void
+        onMessage: (data: { playerId: string; username: string; message: string }) => void,
+        onTreeUpdate?: (treeData: TreeData) => void,
+        onTreesUpdate?: (trees: TreeData[]) => void,
+        onWoodcuttingReward?: (data: { logs: number; xp: number; treeId: string }) => void
     ) {
         this.onPlayerMoveCallback = onPlayerMove;
         this.onPlayerLeftCallback = onPlayerLeft;
         this.onPlayersUpdateCallback = onPlayersUpdate;
         this.socketIdGetter = getSocketId;
         this.onMessageCallback = onMessage;
+        this.onTreeUpdateCallback = onTreeUpdate;
+        this.onTreesUpdateCallback = onTreesUpdate;
+        this.onWoodcuttingRewardCallback = onWoodcuttingReward;
     }
 
     public getNetworkCallbacks(): NetworkCallbacks {
@@ -54,7 +64,10 @@ export class GameNetworkHandler {
             onPlayerMove: (data) => this.handlePlayerMove(data),
             onPlayersUpdate: (players) => this.handlePlayersUpdate(players),
             onPlayerMessage: (data) => this.handlePlayerMessage(data),
-            onConnectionError: (error) => this.handleConnectionError(error)
+            onConnectionError: (error) => this.handleConnectionError(error),
+            onTreeUpdate: this.onTreeUpdateCallback,
+            onTreesUpdate: this.onTreesUpdateCallback,
+            onWoodcuttingReward: this.onWoodcuttingRewardCallback
         };
     }
 

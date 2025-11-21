@@ -3,7 +3,9 @@ import { ConnectionNetwork, type ConnectionCallbacks } from './Connection';
 import { MovementNetwork } from './Movement';
 import { PlayerNetwork, type PlayerCallbacks } from './Player';
 import { ChatNetwork } from './Chat';
+import { WoodcuttingNetwork } from './Woodcutting';
 import type { PlayerData } from '../Player';
+import type { TreeData } from '../Tree';
 
 /**
  * Interface defining all possible network event callbacks
@@ -19,6 +21,9 @@ export interface NetworkCallbacks {
     onPlayersUpdate?: (players: PlayerData[]) => void;                        // Bulk player update
     onPlayerMessage?: (data: any) => void;                                    // Chat message received
     onConnectionError?: (error: Error) => void;                               // Connection error
+    onTreeUpdate?: (treeData: TreeData) => void;                              // Tree state changed
+    onTreesUpdate?: (trees: TreeData[]) => void;                              // Bulk tree update
+    onWoodcuttingReward?: (data: { logs: number; xp: number; treeId: string }) => void; // Reward received
 }
 
 /**
@@ -34,11 +39,12 @@ export interface NetworkCallbacks {
  * This separation makes the code more maintainable and testable
  */
 export class Network {
-    private socket: Socket;
-    private connection: ConnectionNetwork;
-    private movement: MovementNetwork;
-    private playerNetwork: PlayerNetwork;
-    private chat: ChatNetwork;
+    private socket: Socket;              // Socket.IO connection
+    private connection: ConnectionNetwork; // Connection lifecycle
+    private movement: MovementNetwork;    // Movement sync
+    private playerNetwork: PlayerNetwork; // Player events
+    private chat: ChatNetwork;           // Chat messaging
+    private woodcutting: WoodcuttingNetwork; // Woodcutting system
 
     constructor(serverUrl: string, token: string, callbacks: NetworkCallbacks) {
         console.log('Connecting to game server with token:', token ? 'Token exists' : 'No token');
@@ -76,6 +82,18 @@ export class Network {
         if (callbacks.onPlayerMessage) {
             this.chat.onPlayerMessage(callbacks.onPlayerMessage);
         }
+
+        // Initialize woodcutting network
+        this.woodcutting = new WoodcuttingNetwork(this.socket);
+        if (callbacks.onTreeUpdate) {
+            this.woodcutting.onTreeUpdate(callbacks.onTreeUpdate);
+        }
+        if (callbacks.onTreesUpdate) {
+            this.woodcutting.onTreesUpdate(callbacks.onTreesUpdate);
+        }
+        if (callbacks.onWoodcuttingReward) {
+            this.woodcutting.onWoodcuttingReward(callbacks.onWoodcuttingReward);
+        }
     }
 
     public sendPlayerMove(position: { x: number; y: number; z: number }, rotation: { x: number; y: number; z: number }): void {
@@ -84,6 +102,10 @@ export class Network {
 
     public sendMessage(message: string): void {
         this.chat.sendMessage(message);
+    }
+
+    public sendTreeChop(treeId: string): void {
+        this.woodcutting.sendTreeChop(treeId);
     }
 
     public disconnect(): void {
