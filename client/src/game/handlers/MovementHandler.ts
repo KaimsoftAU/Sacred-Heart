@@ -20,9 +20,10 @@ export class MovementHandler {
     /**
      * Update player movement and send to server if moved
      * Called every frame from game loop
+     * @returns true if player moved this frame, false otherwise
      */
-    public update(): void {
-        if (!this.localPlayer) return;
+    public update(): boolean {
+        if (!this.localPlayer) return false;
 
         const { moved, position, rotation } = this.localPlayer.updateMovement();
 
@@ -33,6 +34,8 @@ export class MovementHandler {
                 { x: rotation.x, y: rotation.y, z: rotation.z }
             );
         }
+        
+        return moved;
     }
 
     /**

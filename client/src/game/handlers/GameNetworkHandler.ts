@@ -25,6 +25,7 @@ export class GameNetworkHandler {
     private onTreeUpdateCallback?: (treeData: TreeData) => void;
     private onTreesUpdateCallback?: (trees: TreeData[]) => void;
     private onWoodcuttingRewardCallback?: (data: { logs: number; xp: number; treeId: string }) => void;
+    private onTreeShakeCallback?: (data: { treeId: string; playerId: string }) => void;
 
     /**
      * Constructor: Store callbacks from Game class
@@ -42,7 +43,8 @@ export class GameNetworkHandler {
         onMessage: (data: { playerId: string; username: string; message: string }) => void,
         onTreeUpdate?: (treeData: TreeData) => void,
         onTreesUpdate?: (trees: TreeData[]) => void,
-        onWoodcuttingReward?: (data: { logs: number; xp: number; treeId: string }) => void
+        onWoodcuttingReward?: (data: { logs: number; xp: number; treeId: string }) => void,
+        onTreeShake?: (data: { treeId: string; playerId: string }) => void
     ) {
         this.onPlayerMoveCallback = onPlayerMove;
         this.onPlayerLeftCallback = onPlayerLeft;
@@ -52,6 +54,7 @@ export class GameNetworkHandler {
         this.onTreeUpdateCallback = onTreeUpdate;
         this.onTreesUpdateCallback = onTreesUpdate;
         this.onWoodcuttingRewardCallback = onWoodcuttingReward;
+        this.onTreeShakeCallback = onTreeShake;
     }
 
     public getNetworkCallbacks(): NetworkCallbacks {
@@ -67,7 +70,8 @@ export class GameNetworkHandler {
             onConnectionError: (error) => this.handleConnectionError(error),
             onTreeUpdate: this.onTreeUpdateCallback,
             onTreesUpdate: this.onTreesUpdateCallback,
-            onWoodcuttingReward: this.onWoodcuttingRewardCallback
+            onWoodcuttingReward: this.onWoodcuttingRewardCallback,
+            onTreeShake: this.onTreeShakeCallback
         };
     }
 

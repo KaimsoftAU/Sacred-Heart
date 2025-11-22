@@ -24,6 +24,7 @@ export interface NetworkCallbacks {
     onTreeUpdate?: (treeData: TreeData) => void;                              // Tree state changed
     onTreesUpdate?: (trees: TreeData[]) => void;                              // Bulk tree update
     onWoodcuttingReward?: (data: { logs: number; xp: number; treeId: string }) => void; // Reward received
+    onTreeShake?: (data: { treeId: string; playerId: string }) => void;      // Tree is being shaken
 }
 
 /**
@@ -94,6 +95,9 @@ export class Network {
         if (callbacks.onWoodcuttingReward) {
             this.woodcutting.onWoodcuttingReward(callbacks.onWoodcuttingReward);
         }
+        if (callbacks.onTreeShake) {
+            this.woodcutting.onTreeShake(callbacks.onTreeShake);
+        }
     }
 
     public sendPlayerMove(position: { x: number; y: number; z: number }, rotation: { x: number; y: number; z: number }): void {
@@ -108,12 +112,20 @@ export class Network {
         this.woodcutting.sendTreeChop(treeId);
     }
 
+    public sendTreeShake(treeId: string): void {
+        this.socket.emit('treeShake', { treeId });
+    }
+
     public disconnect(): void {
         this.connection.disconnect();
     }
 
     public getSocketId(): string {
         return this.connection.getSocketId();
+    }
+
+    public getSocket(): Socket {
+        return this.socket;
     }
 
     public isConnected(): boolean {

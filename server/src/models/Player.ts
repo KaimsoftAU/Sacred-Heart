@@ -14,6 +14,12 @@ interface IPlayer extends Document {
     y: number;
     z: number;
   };
+  skills: {
+    woodcutting: {
+      level: number;
+      xp: number;
+    };
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -66,6 +72,21 @@ const PlayerSchema = new Schema<IPlayer>(
       z: {
         type: Number,
         default: 0
+      }
+    },
+    skills: {
+      woodcutting: {
+        level: {
+          type: Number,
+          default: 1,
+          min: 1,
+          max: 20
+        },
+        xp: {
+          type: Number,
+          default: 0,
+          min: 0
+        }
       }
     }
   },

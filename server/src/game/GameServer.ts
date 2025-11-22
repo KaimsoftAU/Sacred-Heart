@@ -160,6 +160,85 @@ export class GameServer {
       this.treeHandler.handleTreeChop(socket, data);
     });
 
+    // Handle tree shake - Broadcast to other players
+    socket.on('treeShake', (data: { treeId: string }) => {
+      // Broadcast to all OTHER players (not the sender who already sees it)
+      socket.broadcast.emit('treeShake', {
+        treeId: data.treeId,
+        playerId: socket.id
+      });
+    });
+
+    // Handle trade request
+    socket.on('tradeRequest', (data: { targetPlayerId: string }) => {
+      const requester = this.players.get(socket.id);
+      const target = this.players.get(data.targetPlayerId);
+      
+      if (requester && target) {
+        console.log(`[GameServer] Trade request from ${requester.username} to ${target.username}`);
+        // Send trade request to target player
+        this.io.to(data.targetPlayerId).emit('tradeRequest', {
+          fromPlayerId: socket.id,
+          fromPlayerName: requester.username
+        });
+      }
+    });
+
+    // Handle trade response (accept/decline)
+    socket.on('tradeResponse', (data: { requesterId: string; accepted: boolean }) => {
+      const responder = this.players.get(socket.id);
+      
+      if (responder) {
+        console.log(`[GameServer] Trade response from ${responder.username}: ${data.accepted ? 'accepted' : 'declined'}`);
+        // Send response back to requester
+        this.io.to(data.requesterId).emit('tradeResponse', {
+          fromPlayerId: socket.id,
+          fromPlayerName: responder.username,
+          accepted: data.accepted
+        });
+      }
+    });
+
+    // Handle trade item update
+    socket.on('tradeUpdate', (data: { otherPlayerId: string; offeredItems: any[] }) => {
+      const player = this.players.get(socket.id);
+      
+      if (player) {
+        console.log(`[GameServer] Trade update from ${player.username}`);
+        // Send updated offer to other player
+        this.io.to(data.otherPlayerId).emit('tradeUpdate', {
+          fromPlayerId: socket.id,
+          offeredItems: data.offeredItems
+        });
+      }
+    });
+
+    // Handle trade acceptance
+    socket.on('tradeAccept', (data: { otherPlayerId: string }) => {
+      const player = this.players.get(socket.id);
+      
+      if (player) {
+        console.log(`[GameServer] Trade accepted by ${player.username}`);
+        // Notify other player of acceptance
+        this.io.to(data.otherPlayerId).emit('tradeAccept', {
+          fromPlayerId: socket.id
+        });
+      }
+    });
+
+    // Handle trade decline/cancel
+    socket.on('tradeDecline', (data: { otherPlayerId: string }) => {
+      const player = this.players.get(socket.id);
+      
+      if (player) {
+        console.log(`[GameServer] Trade declined by ${player.username}`);
+        // Notify other player of decline
+        this.io.to(data.otherPlayerId).emit('tradeDecline', {
+          fromPlayerId: socket.id
+        });
+      }
+    });
+
     // Handle player name update (deprecated, username comes from auth)
     socket.on('setName', (name: string) => {
       const player = this.players.get(socket.id);

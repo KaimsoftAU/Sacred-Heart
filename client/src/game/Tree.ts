@@ -30,6 +30,7 @@ export class Tree {
     // Tree meshes
     private trunk?: BABYLON.Mesh;
     private leaves?: BABYLON.Mesh;
+    private stump?: BABYLON.Mesh;
     
     // Health system
     private health: number;
@@ -61,6 +62,7 @@ export class Tree {
         if (this.isAlive) {
             this.createTreeMesh();
             this.createHealthBar();
+            this.createStump();
         }
     }
 
@@ -68,6 +70,9 @@ export class Tree {
      * Create the visual tree mesh (trunk + leaves)
      */
     private createTreeMesh(): void {
+        // Get ground height at tree position using raycast
+        const groundY = this.getGroundHeight(this.position.x, this.position.z);
+        
         // Create trunk (brown cylinder)
         this.trunk = BABYLON.MeshBuilder.CreateCylinder(
             `tree_trunk_${this.id}`,
@@ -75,12 +80,15 @@ export class Tree {
             this.scene
         );
         this.trunk.position.x = this.position.x;
-        this.trunk.position.y = 1.5; // Half of height
+        this.trunk.position.y = groundY + 1.5; // Half of height above ground
         this.trunk.position.z = this.position.z;
 
         const trunkMaterial = new BABYLON.StandardMaterial(`trunkMat_${this.id}`, this.scene);
         trunkMaterial.diffuseColor = new BABYLON.Color3(0.4, 0.25, 0.1); // Brown
         this.trunk.material = trunkMaterial;
+
+        // Enable collision detection on trunk
+        this.trunk.checkCollisions = true;
 
         // Make trunk clickable
         this.trunk.isPickable = true;
@@ -93,7 +101,7 @@ export class Tree {
             this.scene
         );
         this.leaves.position.x = this.position.x;
-        this.leaves.position.y = 4.25; // Trunk height + half leaves height
+        this.leaves.position.y = groundY + 4.25; // Trunk height + half leaves height
         this.leaves.position.z = this.position.z;
 
         const leavesMaterial = new BABYLON.StandardMaterial(`leavesMat_${this.id}`, this.scene);
@@ -106,10 +114,56 @@ export class Tree {
     }
 
     /**
+     * Create a stump that remains after tree is cut
+     */
+    private createStump(): void {
+        const groundY = this.getGroundHeight(this.position.x, this.position.z);
+        
+        this.stump = BABYLON.MeshBuilder.CreateCylinder(
+            `tree_stump_${this.id}`,
+            { height: 0.5, diameter: 0.6 },
+            this.scene
+        );
+        this.stump.position.x = this.position.x;
+        this.stump.position.y = groundY + 0.25; // Half of stump height
+        this.stump.position.z = this.position.z;
+
+        const stumpMaterial = new BABYLON.StandardMaterial(`stumpMat_${this.id}`, this.scene);
+        stumpMaterial.diffuseColor = new BABYLON.Color3(0.3, 0.2, 0.1); // Darker brown
+        this.stump.material = stumpMaterial;
+        
+        // Hide stump initially (will show when tree is cut)
+        this.stump.isVisible = false;
+        this.stump.isPickable = false;
+    }
+
+    /**
+     * Get ground height at a specific position using raycast
+     */
+    private getGroundHeight(x: number, z: number): number {
+        const rayOrigin = new BABYLON.Vector3(x, 100, z); // Start high above
+        const rayDirection = new BABYLON.Vector3(0, -1, 0); // Point down
+        const ray = new BABYLON.Ray(rayOrigin, rayDirection, 200);
+        
+        const hit = this.scene.pickWithRay(ray, (mesh) => {
+            return mesh.name === 'ground' || mesh.metadata?.type === 'terrain';
+        });
+
+        if (hit && hit.hit && hit.pickedPoint) {
+            return hit.pickedPoint.y;
+        }
+        
+        return 0; // Default to ground level if no hit
+    }
+
+    /**
      * Create health bar above tree
      * RuneScape style: Green bar that depletes as tree is chopped
      */
     private createHealthBar(): void {
+        const groundY = this.getGroundHeight(this.position.x, this.position.z);
+        const healthBarY = groundY + 6; // 6 units above ground
+        
         // Background (red - shows when health is low)
         this.healthBarBackground = BABYLON.MeshBuilder.CreatePlane(
             `healthBarBg_${this.id}`,
@@ -117,7 +171,7 @@ export class Tree {
             this.scene
         );
         this.healthBarBackground.position.x = this.position.x;
-        this.healthBarBackground.position.y = 6; // Above tree
+        this.healthBarBackground.position.y = healthBarY;
         this.healthBarBackground.position.z = this.position.z;
         this.healthBarBackground.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
 
@@ -133,7 +187,7 @@ export class Tree {
             this.scene
         );
         this.healthBarForeground.position.x = this.position.x;
-        this.healthBarForeground.position.y = 6;
+        this.healthBarForeground.position.y = healthBarY;
         this.healthBarForeground.position.z = this.position.z - 0.01; // Slightly in front
         this.healthBarForeground.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
 
@@ -159,11 +213,63 @@ export class Tree {
     }
 
     /**
+     * Play shake animation when tree is hit
+     */
+    public shake(): void {
+        if (!this.trunk || !this.leaves || !this.isAlive) return;
+
+        const originalTrunkRotation = this.trunk.rotation.clone();
+        const originalLeavesRotation = this.leaves.rotation.clone();
+        
+        const shakeDuration = 400; // milliseconds
+        const shakeIntensity = 0.05; // radians (reduced from 0.15)
+        const shakeSpeed = 15; // oscillations (reduced from 20)
+        
+        const startTime = Date.now();
+        
+        const shakeAnimation = () => {
+            const elapsed = Date.now() - startTime;
+            const progress = elapsed / shakeDuration;
+            
+            if (progress >= 1 || !this.trunk || !this.leaves) {
+                // Animation complete, restore original rotation
+                if (this.trunk) {
+                    this.trunk.rotation.x = originalTrunkRotation.x;
+                    this.trunk.rotation.z = originalTrunkRotation.z;
+                }
+                if (this.leaves) {
+                    this.leaves.rotation.x = originalLeavesRotation.x;
+                    this.leaves.rotation.z = originalLeavesRotation.z;
+                }
+                return;
+            }
+            
+            // Decay shake over time
+            const decay = 1 - progress;
+            const shakeX = Math.sin(elapsed / 1000 * shakeSpeed * Math.PI * 2) * shakeIntensity * decay;
+            const shakeZ = Math.cos(elapsed / 1000 * shakeSpeed * Math.PI * 2) * shakeIntensity * decay;
+            
+            this.trunk.rotation.x = originalTrunkRotation.x + shakeX;
+            this.trunk.rotation.z = originalTrunkRotation.z + shakeZ;
+            this.leaves.rotation.x = originalLeavesRotation.x + shakeX;
+            this.leaves.rotation.z = originalLeavesRotation.z + shakeZ;
+            
+            // Continue animation
+            requestAnimationFrame(shakeAnimation);
+        };
+        
+        shakeAnimation();
+    }
+
+    /**
      * Handle tree being clicked/chopped
      * Reduces health and notifies callback
      */
     public chop(): void {
         if (!this.isAlive) return;
+
+        // Play shake animation
+        this.shake();
 
         // Call callback to notify game/network
         if (this.onChopCallback) {
@@ -177,19 +283,78 @@ export class Tree {
      */
     public update(treeData: TreeData): void {
         this.health = treeData.health;
+        const wasAlive = this.isAlive;
         this.isAlive = treeData.isAlive;
 
-        if (!this.isAlive && this.trunk) {
-            // Tree was cut down, remove it
-            this.removeTreeMesh();
+        if (!this.isAlive && wasAlive && this.trunk) {
+            // Tree just died - play falling animation
+            this.playFallingAnimation();
         } else if (this.isAlive && !this.trunk) {
             // Tree respawned, recreate it
             this.createTreeMesh();
             this.createHealthBar();
+            if (!this.stump) {
+                this.createStump();
+            }
+            if (this.stump) {
+                this.stump.isVisible = false;
+            }
         } else if (this.trunk) {
             // Update health bar
             this.updateHealthBar();
         }
+    }
+
+    /**
+     * Play falling animation when tree is cut down
+     */
+    private playFallingAnimation(): void {
+        if (!this.trunk || !this.leaves) return;
+
+        // Random fall direction
+        const fallDirection = Math.random() > 0.5 ? 1 : -1;
+        const groundY = this.getGroundHeight(this.position.x, this.position.z);
+
+        // Create pivot point at base of tree for rotation
+        const pivot = new BABYLON.TransformNode(`tree_pivot_${this.id}`, this.scene);
+        pivot.position.x = this.position.x;
+        pivot.position.y = groundY;
+        pivot.position.z = this.position.z;
+
+        // Parent trunk and leaves to pivot
+        this.trunk.parent = pivot;
+        this.leaves.parent = pivot;
+
+        // Adjust positions relative to pivot
+        this.trunk.position = new BABYLON.Vector3(0, 1.5, 0);
+        this.leaves.position = new BABYLON.Vector3(0, 4.25, 0);
+
+        // Animate rotation
+        const frameRate = 60;
+        const rotationAnimation = new BABYLON.Animation(
+            `treeFall_${this.id}`,
+            'rotation.z',
+            frameRate,
+            BABYLON.Animation.ANIMATIONTYPE_FLOAT,
+            BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT
+        );
+
+        const keyFrames = [
+            { frame: 0, value: 0 },
+            { frame: 30, value: Math.PI / 2 * fallDirection }
+        ];
+        rotationAnimation.setKeys(keyFrames);
+        pivot.animations.push(rotationAnimation);
+
+        // Start animation
+        this.scene.beginAnimation(pivot, 0, 30, false, 1, () => {
+            // After animation, remove tree and show stump
+            this.removeTreeMesh();
+            if (this.stump) {
+                this.stump.isVisible = true;
+            }
+            pivot.dispose();
+        });
     }
 
     /**
@@ -240,5 +405,9 @@ export class Tree {
      */
     public dispose(): void {
         this.removeTreeMesh();
+        if (this.stump) {
+            this.stump.dispose();
+            this.stump = undefined;
+        }
     }
 }

@@ -5,8 +5,9 @@ import { JWT_SECRET } from '../config/env';
 
 const router = express.Router();
 
-interface AuthRequest extends Request {
+export interface AuthRequest extends Request {
   user?: any;
+  userId?: string;
 }
 
 // Middleware to verify token
@@ -19,8 +20,9 @@ export const verifyToken = (req: AuthRequest, res: Response, next: NextFunction)
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
     req.user = decoded;
+    req.userId = decoded.id;
     next();
   } catch (error) {
     res.status(401).json({ error: 'Invalid or expired token' });

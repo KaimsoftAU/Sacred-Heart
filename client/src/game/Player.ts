@@ -1,4 +1,6 @@
 import * as BABYLON from '@babylonjs/core';
+import '@babylonjs/loaders';
+import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 
 // Interface for player data synchronized over network
 export interface PlayerData {
@@ -9,10 +11,10 @@ export interface PlayerData {
 }
 
 /**
- * Player Class - Represents a player in the 3D world
+ * Player Class - Represents a player in the 3D world with Mixamo character
  * 
  * Handles:
- * - Creating 3D mesh (visual representation)
+ * - Loading Mixamo character model (GreatSword warrior) in T-pose
  * - Keyboard input (for local player only)
  * - Movement logic
  * - Name label above head
@@ -20,23 +22,33 @@ export interface PlayerData {
  * - Position/rotation synchronization
  * 
  * Two types of players:
- * 1. Local player (isLocal=true): Controlled by keyboard, blue color
- * 2. Remote players (isLocal=false): Controlled by network updates, red color
+ * 1. Local player (isLocal=true): Controlled by keyboard
+ * 2. Remote players (isLocal=false): Controlled by network updates
  */
 export class Player {
-    private mesh: BABYLON.Mesh;                         // 3D cube representing player
+    private mesh!: BABYLON.Mesh;                        // Root mesh
+    private characterMeshes: BABYLON.AbstractMesh[] = []; // All meshes from loaded character
     private scene: BABYLON.Scene;                       // Reference to Babylon.js scene
     private id: string;                                 // Player's unique ID (socket ID)
     private username?: string;                          // Player's display name
     private label?: BABYLON.Mesh;                       // Name label plane above head
     private keys: { [key: string]: boolean } = {};      // Keyboard state (W,A,S,D pressed?)
     private moveSpeed: number = 0.1;                    // Movement speed per frame
+    private rotationSpeed: number = 0.05;               // Rotation speed per frame (radians)
     private isLocal: boolean;                           // Is this the player we control?
     private chatBubble?: BABYLON.Mesh;                  // Chat message plane
     private chatText?: BABYLON.DynamicTexture;          // Texture for chat text
     private chatTimeout?: number;                       // Timer to hide chat bubble
     private health: number = 100;                       // Player health
     private maxHealth: number = 100;                    // Max health
+    private isLoaded: boolean = false;                  // Has character finished loading?
+    
+    // Physics properties
+    private velocityY: number = 0;                      // Vertical velocity (for jumping/falling)
+    private gravity: number = -0.015;                   // Gravity acceleration
+    private jumpStrength: number = 0.35;                // Jump initial velocity
+    private isGrounded: boolean = true;                 // Is player on ground?
+    private groundLevel: number = 0.5;                  // Ground height (default player spawn height)
 
     /**
      * Constructor: Create a new player in the world
@@ -50,29 +62,16 @@ export class Player {
         this.username = playerData.username;
         this.isLocal = isLocal;
 
-        /**
-         * Create 3D mesh - a simple cube to represent the player
-         * In a real game, this would be a character model
-         */
+        // Create temporary placeholder box while character loads
         this.mesh = BABYLON.MeshBuilder.CreateBox(
-            `player_${this.id}`,  // Unique name
-            { size: 1 },           // 1x1x1 cube
+            `player_${this.id}`,
+            { size: 0.5 },
             this.scene
         );
-
-        /**
-         * Set mesh color based on player type
-         * - Blue = local player (you)
-         * - Red = remote players (others)
-         */
-        const material = new BABYLON.StandardMaterial(`mat_${this.id}`, this.scene);
-        material.diffuseColor = isLocal 
-            ? new BABYLON.Color3(0, 0, 1)  // Blue for local player
-            : new BABYLON.Color3(1, 0, 0); // Red for remote players
-        this.mesh.material = material;
-
-        // Make mesh pickable and add metadata for identification
+        this.mesh.isVisible = false; // Hide placeholder once character loads
         this.mesh.isPickable = true;
+        this.mesh.checkCollisions = true; // Enable collision detection
+        this.mesh.ellipsoid = new BABYLON.Vector3(0.5, 1, 0.5); // Collision bounds (width, height, depth)
         this.mesh.metadata = { 
             type: 'player', 
             id: this.id, 
@@ -82,6 +81,9 @@ export class Player {
         // Set initial position and rotation from database or network
         this.setPosition(playerData.position);
         this.setRotation(playerData.rotation);
+
+        // Load Mixamo character asynchronously
+        this.loadCharacter();
 
         // Create yellow name label above remote players (not above yourself)
         if (!isLocal && this.username) {
@@ -95,14 +97,58 @@ export class Player {
     }
 
     /**
+     * Load Mixamo character in T-pose (no animations)
+     */
+    private async loadCharacter(): Promise<void> {
+        try {
+            console.log('Loading character from Maria WProp J J Ong.glb...');
+            const result = await SceneLoader.ImportMeshAsync(
+                '',
+                '/GreatSwordPack/',
+                'Maria WProp J J Ong.glb',
+                this.scene
+            );
+
+            // Setup character meshes
+            result.meshes.forEach(mesh => {
+                mesh.parent = this.mesh;
+                mesh.position = BABYLON.Vector3.Zero();
+                mesh.rotation = new BABYLON.Vector3(Math.PI / 2, 0, 0);
+                mesh.scaling = new BABYLON.Vector3(0.01, 0.01, 0.01);
+                mesh.isPickable = true;
+                mesh.metadata = { type: 'player', id: this.id, playerId: this.id };
+            });
+
+            this.characterMeshes = result.meshes;
+            
+            this.isLoaded = true;
+            console.log(`✓ Player ${this.id} character loaded in T-pose`);
+        } catch (error) {
+            console.error(`Failed to load character for player ${this.id}:`, error);
+        }
+    }
+
+    public isCharacterLoaded(): boolean {
+        return this.isLoaded;
+    }
+
+    /**
      * Setup keyboard input listeners
      * Tracks which keys are currently pressed
      * Only called for local player
+     * 
+     * Keybinds: WASD/Arrows for movement, Space for jump
      */
     private setupKeyboardControls(): void {
         // When key is pressed, mark it as true in keys object
         window.addEventListener('keydown', (evt) => {
-            this.keys[evt.key.toLowerCase()] = true;
+            const key = evt.key.toLowerCase();
+            this.keys[key] = true;
+            
+            // Handle jump
+            if (key === ' ' && this.isGrounded && !evt.repeat) {
+                this.jump();
+            }
         });
 
         // When key is released, mark it as false
@@ -112,14 +158,82 @@ export class Player {
     }
 
     /**
+     * Jump method - applies upward velocity
+     */
+    private jump(): void {
+        if (this.isGrounded) {
+            this.velocityY = this.jumpStrength;
+            this.isGrounded = false;
+        }
+    }
+
+    /**
+     * Check if player is on the ground by raycasting down
+     */
+    private checkGroundCollision(): void {
+        const rayOrigin = this.mesh.position.clone();
+        const rayDirection = new BABYLON.Vector3(0, -1, 0);
+        const rayLength = 0.6;
+        
+        const ray = new BABYLON.Ray(rayOrigin, rayDirection, rayLength);
+        const hit = this.scene.pickWithRay(ray, (mesh) => {
+            return mesh.name === 'ground' || mesh.metadata?.type === 'terrain';
+        });
+
+        if (hit && hit.hit && hit.pickedPoint) {
+            const distanceToGround = rayOrigin.y - hit.pickedPoint.y;
+            
+            if (distanceToGround <= this.groundLevel && this.velocityY <= 0) {
+                this.mesh.position.y = hit.pickedPoint.y + this.groundLevel;
+                this.velocityY = 0;
+                this.isGrounded = true;
+            }
+        } else {
+            this.isGrounded = false;
+        }
+    }
+
+    /**
+     * Check if there's a collision (tree, rock, etc) at the given position
+     * Only checks for non-ground objects
+     */
+    private checkCollisionAtPosition(x: number, z: number): boolean {
+        const checkRadius = 0.5; // Player collision radius
+        const rayOrigin = new BABYLON.Vector3(x, this.mesh.position.y, z);
+        
+        // Check in multiple directions around the player
+        const directions = [
+            new BABYLON.Vector3(1, 0, 0),   // Right
+            new BABYLON.Vector3(-1, 0, 0),  // Left
+            new BABYLON.Vector3(0, 0, 1),   // Forward
+            new BABYLON.Vector3(0, 0, -1),  // Back
+        ];
+
+        for (const direction of directions) {
+            const ray = new BABYLON.Ray(rayOrigin, direction, checkRadius);
+            const hit = this.scene.pickWithRay(ray, (mesh) => {
+                // Only check collision with trees and objects, NOT ground
+                return mesh.metadata?.type === 'tree' && mesh.checkCollisions;
+            });
+
+            if (hit && hit.hit && hit.distance < checkRadius) {
+                return true; // Collision detected
+            }
+        }
+
+        return false; // No collision
+    }
+
+    /**
      * Update player movement based on keyboard input
      * Called every frame from game loop
      * 
-     * Controls:
-     * - W/ArrowUp: Move forward (increase Z)
-     * - S/ArrowDown: Move backward (decrease Z)
-     * - A/ArrowLeft: Move left (decrease X)
-     * - D/ArrowRight: Move right (increase X)
+     * Controls (Tank/Car style):
+     * - W/ArrowUp: Move forward in the direction player is facing
+     * - S/ArrowDown: Move backward in the direction player is facing
+     * - A/ArrowLeft: Rotate left (counter-clockwise)
+     * - D/ArrowRight: Rotate right (clockwise)
+     * - Space: Jump
      * 
      * @returns Object containing:
      *   - moved: Whether player moved this frame (to know if we need to send update)
@@ -133,28 +247,64 @@ export class Player {
         }
 
         let moved = false;
-        const position = this.mesh.position;
 
-        // Check each direction key and update position
-        if (this.keys['w'] || this.keys['arrowup']) {
-            position.z += this.moveSpeed;  // Forward
-            moved = true;
-        }
-        if (this.keys['s'] || this.keys['arrowdown']) {
-            position.z -= this.moveSpeed;  // Backward
-            moved = true;
-        }
+        // Rotation: A/D keys rotate the player
         if (this.keys['a'] || this.keys['arrowleft']) {
-            position.x -= this.moveSpeed;  // Left
+            this.mesh.rotation.y -= this.rotationSpeed;  // Rotate left (counter-clockwise)
             moved = true;
         }
         if (this.keys['d'] || this.keys['arrowright']) {
-            position.x += this.moveSpeed;  // Right
+            this.mesh.rotation.y += this.rotationSpeed;  // Rotate right (clockwise)
+            moved = true;
+        }
+
+        // Movement: W/S keys move forward/backward in the direction player is facing
+        if (this.keys['w'] || this.keys['arrowup']) {
+            // Calculate desired position
+            const newX = this.mesh.position.x + Math.sin(this.mesh.rotation.y) * this.moveSpeed;
+            const newZ = this.mesh.position.z + Math.cos(this.mesh.rotation.y) * this.moveSpeed;
+            
+            // Check for collision with trees/objects (not ground)
+            if (!this.checkCollisionAtPosition(newX, newZ)) {
+                this.mesh.position.x = newX;
+                this.mesh.position.z = newZ;
+            }
+            moved = true;
+        }
+        if (this.keys['s'] || this.keys['arrowdown']) {
+            // Calculate desired position
+            const newX = this.mesh.position.x - Math.sin(this.mesh.rotation.y) * this.moveSpeed;
+            const newZ = this.mesh.position.z - Math.cos(this.mesh.rotation.y) * this.moveSpeed;
+            
+            // Check for collision with trees/objects (not ground)
+            if (!this.checkCollisionAtPosition(newX, newZ)) {
+                this.mesh.position.x = newX;
+                this.mesh.position.z = newZ;
+            }
+            moved = true;
+        }
+
+        // Apply gravity separately (vertical movement)
+        this.velocityY += this.gravity;
+        this.mesh.position.y += this.velocityY;
+        
+        // Check ground collision
+        this.checkGroundCollision();
+        
+        // Prevent falling through ground
+        if (this.mesh.position.y < this.groundLevel) {
+            this.mesh.position.y = this.groundLevel;
+            this.velocityY = 0;
+            this.isGrounded = true;
+        }
+
+        // Mark as moved if position changed due to physics
+        if (this.velocityY !== 0) {
             moved = true;
         }
 
         // Return clones to avoid reference issues
-        return { moved, position: position.clone(), rotation: this.mesh.rotation.clone() };
+        return { moved, position: this.mesh.position.clone(), rotation: this.mesh.rotation.clone() };
     }
 
     private createNameLabel(): void {
@@ -363,6 +513,13 @@ export class Player {
         if (this.label) {
             this.label.dispose();
         }
+        
+        // Dispose character meshes
+        this.characterMeshes.forEach(mesh => {
+            mesh.dispose();
+        });
+        this.characterMeshes = [];
+        
         this.mesh.getChildMeshes().forEach(child => child.dispose());
         this.mesh.dispose();
     }

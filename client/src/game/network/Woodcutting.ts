@@ -50,6 +50,14 @@ export class WoodcuttingNetwork {
     }
 
     /**
+     * Listen for tree shake events from other players
+     * @param callback - Called when another player shakes a tree
+     */
+    public onTreeShake(callback: (data: { treeId: string; playerId: string }) => void): void {
+        this.socket.on('treeShake', callback);
+    }
+
+    /**
      * Remove tree update listener
      */
     public offTreeUpdate(): void {
@@ -68,5 +76,12 @@ export class WoodcuttingNetwork {
      */
     public offWoodcuttingReward(): void {
         this.socket.off('woodcuttingReward');
+    }
+
+    /**
+     * Remove tree shake listener
+     */
+    public offTreeShake(): void {
+        this.socket.off('treeShake');
     }
 }

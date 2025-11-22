@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import * as BABYLON from '@babylonjs/core';
+import '@babylonjs/loaders';
 
 /**
  * PlayerInfoUI Component - WoW-style target frame
@@ -11,6 +12,7 @@ interface PlayerInfoUIProps {
     health: number;
     maxHealth: number;
     playerMesh: BABYLON.Mesh | null;
+    woodcuttingLevel?: number;
     onClose: () => void;
 }
 
@@ -19,6 +21,7 @@ export const PlayerInfoUI: React.FC<PlayerInfoUIProps> = ({
     health, 
     maxHealth, 
     playerMesh,
+    woodcuttingLevel = 1,
     onClose 
 }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -40,30 +43,48 @@ export const PlayerInfoUI: React.FC<PlayerInfoUIProps> = ({
         const camera = new BABYLON.ArcRotateCamera(
             'previewCamera',
             Math.PI / 2,
-            Math.PI / 3,
-            5,
-            new BABYLON.Vector3(0, 0.5, 0),
+            Math.PI / 2.5,
+            3,
+            new BABYLON.Vector3(0, 1, 0),
             scene
         );
         camera.attachControl(canvasRef.current, false);
 
         // Light
         const light = new BABYLON.HemisphericLight('previewLight', new BABYLON.Vector3(0, 1, 0), scene);
-        light.intensity = 0.7;
+        light.intensity = 1.2;
 
-        // Clone player mesh for preview
-        const clonedMesh = playerMesh.clone('previewMesh', null);
-        if (clonedMesh) {
-            clonedMesh.position = new BABYLON.Vector3(0, 0, 0);
-            clonedMesh.rotation = new BABYLON.Vector3(0, 0, 0);
+        // Load the character model directly into preview scene
+        (async () => {
+            try {
+                const result = await BABYLON.SceneLoader.ImportMeshAsync(
+                    '',
+                    '/GreatSwordPack/',
+                    'Maria WProp J J Ong.glb',
+                    scene
+                );
 
-            // Add subtle rotation animation
-            scene.registerBeforeRender(() => {
-                if (clonedMesh) {
-                    clonedMesh.rotation.y += 0.01;
+                console.log('Preview loaded:', result.meshes.length, 'meshes');
+
+                // Setup character meshes in preview
+                result.meshes.forEach(mesh => {
+                    mesh.position = new BABYLON.Vector3(0, 0, 0);
+                    mesh.rotation = new BABYLON.Vector3(0, 0, 0);
+                    mesh.scaling = new BABYLON.Vector3(1, 1, 1);
+                    mesh.isVisible = true;
+                });
+
+                // Add subtle rotation animation to root mesh
+                if (result.meshes.length > 0) {
+                    const rootMesh = result.meshes[0];
+                    scene.registerBeforeRender(() => {
+                        rootMesh.rotation.y += 0.01;
+                    });
                 }
-            });
-        }
+            } catch (error) {
+                console.error('Failed to load character preview:', error);
+            }
+        })();
 
         // Render loop
         engine.runRenderLoop(() => {
@@ -153,6 +174,28 @@ export const PlayerInfoUI: React.FC<PlayerInfoUIProps> = ({
                         transition: 'width 0.3s ease',
                         boxShadow: 'inset 0 2px 4px rgba(255, 255, 255, 0.3)'
                     }} />
+                </div>
+            </div>
+
+            {/* Woodcutting Level */}
+            <div style={{ 
+                marginBottom: '12px',
+                padding: '8px',
+                backgroundColor: 'rgba(139, 69, 19, 0.3)',
+                borderRadius: '4px',
+                border: '1px solid rgba(139, 69, 19, 0.6)'
+            }}>
+                <div style={{
+                    fontSize: '13px',
+                    fontWeight: 'bold',
+                    color: '#8B4513',
+                    textShadow: '1px 1px 2px rgba(0, 0, 0, 0.8)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                }}>
+                    <span style={{ fontSize: '16px' }}>🪓</span>
+                    <span>Woodcutting Level: {woodcuttingLevel}</span>
                 </div>
             </div>
 
