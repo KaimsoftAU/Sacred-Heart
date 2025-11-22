@@ -8,8 +8,9 @@
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
-    "dev": "nodemon --watch . --ext ts --exec tsx server.ts",
-    "start": "node dist/server.js"
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@types/mongoose": "^5.11.96",

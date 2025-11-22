@@ -1,7 +1,7 @@
 {
   "name": "sacred-heart",
   "version": "1.0.0",
-  "description": "Sacred Heart ",
+  "description": "Sacred Heart - Full Stack Game",
   "homepage": "https://github.com/KaimsoftAU/Sacred-Heart#readme",
   "bugs": {
     "url": "https://github.com/KaimsoftAU/Sacred-Heart/issues"
@@ -12,19 +12,16 @@
   },
   "license": "ISC",
   "author": "Kyle McCarthy",
-  "type": "commonjs",
-  "main": "index.js",
   "scripts": {
-    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev": "concurrently -n \"SERVER,CLIENT\" -c \"bgBlue,bgMagenta\" \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "cd server && npm run dev",
     "dev:client": "cd client && npm run dev",
     "build": "npm run build:server && npm run build:client",
     "build:server": "cd server && npm run build",
     "build:client": "cd client && npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2",
-    "nodemon": "^3.1.9"
+    "concurrently": "^9.1.2"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "name": "sacred-heart",
+  "name": "client",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,16 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@babylonjs/core": "^8.38.0",
     "@babylonjs/loaders": "^8.38.0",
-    "babylonjs-fbx-loader": "^1.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router-dom": "^7.1.1",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
-    "@babylonjs/core": "^8.38.0",
-    "@babylonjs/inspector": "^8.38.0",
     "@eslint/js": "^9.39.1",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
